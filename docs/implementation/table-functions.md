@@ -1,6 +1,6 @@
 # 表函数框架与虚拟表迁移实施任务图
 
-状态：实施中。基线：2026-10-17 获取的 `origin/master`，`a8afc89e9bb3fd4db41cefcb77274a1fe35879cc`。集成分支：`feat/table-functions-schema-free`。
+状态：实现和本地验收完成，最终审查问题已修复。基线：2026-10-17 获取并在交付前复核的 `origin/master`，`a8afc89e9bb3fd4db41cefcb77274a1fe35879cc`。集成分支：`feat/table-functions-schema-free`。生产候选构建为 `40b6a9302`，随后提交仅补充快照测试和交付记录。
 
 规格：[表函数框架](../design/table-functions.md)、[PL 复合值输出](../design/pl-composite-client-output.md)。全部 Q1–Q23 和六项架构复核修订均为实现契约；历史行为只作核查依据。
 
@@ -8,12 +8,12 @@
 
 | Ticket | 交付 | 阻塞于 | 状态 |
 | --- | --- | --- | --- |
-| [TF-1](https://github.com/oceanbase/seekdb/issues/1519) | 共同注册、FROM 调用及专属语法适配、绑定列和别名、SHOW/DESCRIBE、查询展开及缓存接入 | 无 | 实现中 |
-| [TF-2](https://github.com/oceanbase/seekdb/issues/1520) | 统一扫描接入；SQL/PL UNNEST、多输入与记录映射；GENERATOR 执行时参数、关联重扫及资源生命周期 | TF-1 | 实现中（与 TF-1 同分支） |
-| [TF-3](https://github.com/oceanbase/seekdb/issues/1521) | 启用 VT 清单、轻量描述符生成、无自身表 schema 的扫描器和工厂适配 | 无 | 已集成；143 项列信息与有限扫描对比通过 |
-| [TF-4](https://github.com/oceanbase/seekdb/issues/1522) | 系统信息函数接入，视图/SHOW/内部查询切换，移除自身 schema 创建/名字映射/bootstrap 落盘 | TF-1、TF-2、TF-3 | 已集成；新实例元数据为 0，视图与权限回归中 |
-| [TF-5](https://github.com/oceanbase/seekdb/issues/1523) | 通用结果输出层的 PL 复合值编码，统一文本/二进制及普通/打包输出 | 无 | 已集成；9 项编码单测通过，协议路径验证中 |
-| [TF-6](https://github.com/oceanbase/seekdb/issues/1524) | 全部功能验收、生产编译、针对性回归、新实例 schema/磁盘对比、PR 审查与问题修复 | TF-1、TF-2、TF-3、TF-4、TF-5 | 全量构建、新实例和部分回归通过；最终审查未完成 |
+| [TF-1](https://github.com/oceanbase/seekdb/issues/1519) | 共同注册、FROM 调用及专属语法适配、绑定列和别名、SHOW/DESCRIBE、查询展开及缓存接入 | 无 | 完成；SQL 回归及同名重载单测通过 |
+| [TF-2](https://github.com/oceanbase/seekdb/issues/1520) | 统一扫描接入；SQL/PL UNNEST、多输入与记录映射；GENERATOR 执行时参数、关联重扫及资源生命周期 | TF-1 | 完成；集合单测、关联重扫及资源验证通过 |
+| [TF-3](https://github.com/oceanbase/seekdb/issues/1521) | 启用 VT 清单、轻量描述符生成、无自身表 schema 的扫描器和工厂适配 | 无 | 完成；143 项列信息与有限扫描对比无新增错误 |
+| [TF-4](https://github.com/oceanbase/seekdb/issues/1522) | 系统信息函数接入，视图/SHOW/内部查询切换，移除自身 schema 创建/名字映射/bootstrap 落盘 | TF-1、TF-2、TF-3 | 完成；新实例元数据为 0，视图、目录快照与权限回归通过 |
+| [TF-5](https://github.com/oceanbase/seekdb/issues/1523) | 通用结果输出层的 PL 复合值编码，统一文本/二进制及普通/打包输出 | 无 | 完成；14 项编码和真实协议接口测试通过，当前 PL 语言边界见验证记录 |
+| [TF-6](https://github.com/oceanbase/seekdb/issues/1524) | 全部功能验收、生产编译、针对性回归、新实例 schema/磁盘对比、PR 审查与问题修复 | TF-1、TF-2、TF-3、TF-4、TF-5 | 完成；release、20 项 C++ 测试、7 项生成测试、6 套 mysqltest 通过；审查无未解决 Blocker/Major |
 
 ```mermaid
 flowchart LR
@@ -43,7 +43,7 @@ flowchart LR
 
 - 最新 master 基线已获取；此前设计与研究文档随实现分支保存。
 - 调研笔记目录：`/data/1/nijia.nj/table-function-implementation-notes/`，供子代理共享，位于仓库之外。
-- [规格跟踪 issue](https://github.com/oceanbase/seekdb/issues/1518)；各任务链接见上表；[草稿 PR #1525](https://github.com/oceanbase/seekdb/pull/1525)。
+- [规格跟踪 issue](https://github.com/oceanbase/seekdb/issues/1518)；各任务链接见上表；[PR #1525](https://github.com/oceanbase/seekdb/pull/1525)。
 - 最新 master 的启用清单：143 个 VT、1664 个输出列、0 个 VT 索引、139 个系统视图。136 个有效手写工厂分支及 7 个生成 provider 覆盖全部 VT；另有 10 个已无定义的旧 ID 分支，不纳入迁移能力清单。
 - 设计基线中的 SQLite 生成扫描已在最新 master 改为 LocalStore/Rust 提供方；7 个生成 provider 包含 6 个 LocalStore snapshot cursor 和 1 个 Rust 配置目录，11 个真实本地存储定义必须保留。实现按最新数据源适配，不恢复旧 SQLite 实现。
 
@@ -55,4 +55,4 @@ flowchart LR
 
 证据位于共享笔记目录的 `baseline-instance.json`、`baseline-view-execution.json`、`baseline-build-offline.log`；`capture_instance.py` 记录相同口径的元数据、运行时旧名称、schema 分配器及实际文件占用。文件预分配、日志和真实系统存储必须与删除的 VT 元数据分开解释，不能把文件尺寸直接当作 VT 数据量。
 
-实施后的实测记录见[验证记录](./table-functions-validation.md)。该记录区分已经执行的检查、基线已有失败和剩余验收，不以编译成功代替完整交付。
+实施后的实测记录见[验证记录](./table-functions-validation.md)和[消费者验收](./table-function-consumer-validation.md)。记录区分迁移结果、基线已有问题及当前 PL 运行时边界；本地验收不等同于远端完整 CI 已通过。
