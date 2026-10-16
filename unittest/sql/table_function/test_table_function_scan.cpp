@@ -85,6 +85,9 @@ TEST_F(TableFunctionScanTest, null_empty_and_uninitialized_collections_produce_n
   arguments_.at(0).set_null();
   ASSERT_EQ(OB_SUCCESS, scan_->rescan(arguments_));
   EXPECT_EQ(OB_ITER_END, scan_->get_next_row(row));
+  arguments_.at(0).set_extend(0, PL_NESTED_TABLE_TYPE);
+  ASSERT_EQ(OB_SUCCESS, scan_->rescan(arguments_));
+  EXPECT_EQ(OB_ITER_END, scan_->get_next_row(row));
 }
 
 TEST_F(TableFunctionScanTest, zip_skips_deleted_slots_but_preserves_null_elements)
@@ -146,10 +149,11 @@ TEST_F(TableFunctionScanTest, records_expand_once_and_preserve_nested_composite_
   ObPLRecord null_record;
   null_record.set_count(3);
   null_record.set_null();
-  ObObj elements[3] = {composite(record), composite(null_record), ObObj()};
+  ObObj elements[4] = {composite(record), composite(null_record), ObObj(), ObObj()};
   elements[2].set_null();
+  elements[3].set_extend(0, PL_RECORD_TYPE);
   ObPLCollection records(PL_NESTED_TABLE_TYPE, 104);
-  set_elements(records, elements, 3);
+  set_elements(records, elements, 4);
   ASSERT_EQ(OB_SUCCESS, arguments_.push_back(composite(records)));
   ASSERT_EQ(OB_SUCCESS, column_counts_.push_back(3));
   project({0, 1, 2});
@@ -162,7 +166,7 @@ TEST_F(TableFunctionScanTest, records_expand_once_and_preserve_nested_composite_
   EXPECT_EQ(PL_RECORD_TYPE, row->cells_[1].get_meta().get_extend_type());
   EXPECT_EQ(members[2].get_ext(), row->cells_[2].get_ext());
   EXPECT_EQ(PL_VARRAY_TYPE, row->cells_[2].get_meta().get_extend_type());
-  for (int i = 0; i < 2; ++i) {
+  for (int i = 0; i < 3; ++i) {
     ASSERT_EQ(OB_SUCCESS, scan_->get_next_row(row));
     ASSERT_EQ(3, row->count_);
     for (int j = 0; j < 3; ++j) { EXPECT_TRUE(row->cells_[j].is_null()); }

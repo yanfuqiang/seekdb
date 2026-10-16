@@ -107,7 +107,8 @@ public:
         OZ (input.array_->init(bytes));
       } else if (argument.is_pl_extend()) {
         auto *composite = reinterpret_cast<pl::ObPLComposite *>(argument.get_ext());
-        if (composite == nullptr || !composite->is_collection()) { ret = OB_ERR_INVALID_TYPE_FOR_ARGUMENT; }
+        if (composite == nullptr) { // typed NULL composite
+        } else if (!composite->is_collection()) { ret = OB_ERR_INVALID_TYPE_FOR_ARGUMENT; }
         else if (!composite->is_null()) { input.collection_ = static_cast<pl::ObPLCollection *>(composite); }
       } else { ret = OB_ERR_INVALID_TYPE_FOR_ARGUMENT; }
       OZ (inputs_.push_back(input));
@@ -151,7 +152,7 @@ public:
         if (input.position_ < collection.get_count()) {
           any = true;
           const ObObj &element = elements[input.position_++];
-          if (element.is_null()) {
+          if (element.is_null() || (element.is_pl_extend() && element.get_ext() == 0)) {
           } else if (element.is_pl_extend() && element.get_ext() != 0 &&
                      reinterpret_cast<pl::ObPLComposite *>(element.get_ext())->is_record()) {
             auto *record = reinterpret_cast<pl::ObPLRecord *>(element.get_ext());
