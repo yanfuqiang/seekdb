@@ -24,6 +24,7 @@
 #include "observer/virtual_table/ob_show_tables.h"
 #include "observer/virtual_table/ob_virtual_warning.h"
 #include "sql/table_function/table_function.h"
+#include "sql/resolver/expr/ob_raw_expr_util.h"
 #include "sql/engine/ob_exec_context.h"
 #include "sql/engine/ob_physical_plan_ctx.h"
 #include "observer/virtual_table/ob_session_variables.h"
@@ -1804,7 +1805,7 @@ static TableFunctionColumn make_system_table_column(const char *name, ObObjType 
   }
   column.type_.set_collation_type(collation);
   column.type_.set_charset_type(ObCharset::charset_type_by_coll(collation));
-  column.type_.set_collation_level(CS_LEVEL_IMPLICIT);
+  column.type_.set_collation_level(ObRawExprUtils::get_column_collation_level(type));
   return column;
 }
 
