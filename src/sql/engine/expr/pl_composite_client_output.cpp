@@ -71,6 +71,10 @@ public:
       }
     } else {
       ObDatum datum;
+      // from_obj borrows string payloads, but copies fixed-width values and
+      // NUMBER/DECIMAL payloads into caller-provided storage.
+      alignas(uint64_t) char datum_buffer[OBJ_DATUM_MAX_RES_SIZE];
+      datum.ptr_ = datum_buffer;
       ObObjMeta meta = value.get_meta();
       ObIJsonBase *json = nullptr;
       if (OB_FAIL(datum.from_obj(value))) {

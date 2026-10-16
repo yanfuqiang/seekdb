@@ -202,6 +202,41 @@ TEST_F(PlCompositeOutputTest, declared_booleans_use_json_boolean_literals)
   expect_json(record(value), "{\"enabled\":false}");
 }
 
+TEST_F(PlCompositeOutputTest, scalar_datum_storage_covers_numeric_widths_and_borrowed_strings)
+{
+  ObObj leaf;
+  ObPLCollection list(PL_NESTED_TABLE_TYPE, 109);
+  list.set_count(1);
+  list.set_data(&leaf, 1);
+  leaf.set_int(INT64_MIN);
+  expect_json(collection(list), "[-9223372036854775808]");
+  leaf.set_uint64(UINT64_MAX);
+  expect_json(collection(list), "[18446744073709551615]");
+  leaf.set_float(1.25f);
+  expect_json(collection(list), "[1.25]");
+  leaf.set_double(2.5);
+  expect_json(collection(list), "[2.5]");
+
+  number::ObNumber number;
+  ASSERT_EQ(OB_SUCCESS, number.from("123456789012345678901234567890.25", allocator_));
+  leaf.set_number(number);
+  leaf.set_scale(2);
+  expect_json(collection(list), "[123456789012345678901234567890.25]");
+
+  // Exercise even the largest DECIMAL datum layout, not just machine integers.
+  ObDecimalIntBuilder decimal;
+  decimal.from(int512_t(12345));
+  for (int32_t width : {4, 8, 16, 32, 64}) {
+    leaf.set_decimal_int(width, 2, const_cast<ObDecimalInt *>(decimal.get_decimal_int()));
+    expect_json(collection(list), "[123.45]");
+  }
+
+  const std::string long_text(1024, 'x');
+  leaf.set_varchar(ObString(long_text.size(), long_text.data()));
+  leaf.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+  expect_json(collection(list), "[\"" + long_text + "\"]");
+}
+
 TEST_F(PlCompositeOutputTest, unsupported_keyed_values_do_not_lose_keys)
 {
   ObPLCollection keyed(PL_ASSOCIATIVE_ARRAY_TYPE, 105);
