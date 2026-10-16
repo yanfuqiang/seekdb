@@ -38,7 +38,6 @@ protected:
   {
     collection.set_data(values, size);
     collection.set_count(size);
-    collection.set_inited();
   }
   int open(uint64_t id = UNNEST_FUNCTION_ID)
   {
