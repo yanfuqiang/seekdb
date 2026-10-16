@@ -185,6 +185,9 @@ int TableItem::deep_copy(ObIRawExprCopier &expr_copier,
   ddl_schema_version_ = other.ddl_schema_version_;
   ddl_table_id_ = other.ddl_table_id_;
   ref_query_ = other.ref_query_;
+  table_function_id_ = other.table_function_id_;
+  OZ (function_argument_column_counts_.assign(other.function_argument_column_counts_));
+  OZ (function_column_names_.assign(other.function_column_names_));
   SampleInfo *buf = NULL;
   if (is_json_table() 
       && OB_FAIL(deep_copy_json_table_def(*other.json_table_def_, expr_copier, allocator))) {

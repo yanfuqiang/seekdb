@@ -20,6 +20,7 @@
 #include "sql/resolver/ob_resolver_utils.h"
 #include "sql/resolver/cmd/ob_show_table_status_sql.h"
 #include "sql/printer/ob_schema_printer.h"
+#include "sql/table_function/table_function.h"
 
 using namespace oceanbase::common;
 using namespace oceanbase::share;
@@ -128,8 +129,110 @@ int ObShowResolver::check_db_access_for_show_sql(const ObShowResolverContext &sh
   return ret;
 }
 
+namespace {
+// Hex literals avoid dependence on NO_BACKSLASH_ESCAPES, ANSI_QUOTES or data
+// containing quote characters. Descriptions never execute provider scans.
+int append_table_function_text(ObSqlString &sql, const ObString &text)
+{
+  int ret = OB_SUCCESS;
+  OZ (sql.append("CONVERT(X'"));
+  for (int64_t i = 0; OB_SUCC(ret) && i < text.length(); ++i) {
+    OZ (sql.append_fmt("%02x", static_cast<unsigned char>(text.ptr()[i])));
+  }
+  OZ (sql.append("' USING utf8mb4)"));
+  return ret;
+}
+void replace_description_call(ParseNode *&node, ParseNode *call)
+{
+  if (node != nullptr) {
+    if (node->type_ == T_TABLE_FUNCTION_CALL) { node = call; }
+    else {
+      for (int64_t i = 0; i < node->num_child_; ++i) { replace_description_call(node->children_[i], call); }
+    }
+  }
+}
+}
+
+int ObShowResolver::resolve_table_function_description(const ParseNode &node)
+{
+  int ret = OB_SUCCESS;
+  ObSEArray<const TableFunctionDescriptor *, 16> descriptors;
+  ObSEArray<ObString, 16> names;
+  ObSEArray<ObObjType, 16> types;
+  ObSqlString sql;
+  bool concrete = false;
+  if (node.type_ == T_SHOW_TABLE_FUNCTIONS) {
+    OZ (TableFunctionRegistry::get_all(descriptors));
+  } else {
+    const ParseNode *argument = node.children_[0];
+    concrete = argument->type_ == T_TABLE_FUNCTION_CALL || argument->type_ == T_JSON_TABLE_EXPRESSION;
+    ParseNode json_name = {};
+    json_name.str_value_ = "json_table";
+    json_name.str_len_ = 10;
+    const ParseNode *name = argument->type_ == T_JSON_TABLE_EXPRESSION ? &json_name :
+      (concrete ? argument->children_[0] : argument);
+    const TableFunctionDescriptor *descriptor = TableFunctionRegistry::find(ObString(name->str_len_, name->str_value_));
+    if (descriptor == nullptr) {
+      ret = OB_ERR_SP_DOES_NOT_EXIST;
+      LOG_USER_ERROR(OB_ERR_SP_DOES_NOT_EXIST, "TABLE FUNCTION", static_cast<int>(name->str_len_), name->str_value_);
+    } else { OZ (descriptors.push_back(descriptor)); }
+    if (OB_SUCC(ret) && concrete) {
+      ObParser parser(*allocator_, session_info_->get_sql_mode(), session_info_->get_charsets4parser());
+      ParseResult parsed;
+      OZ (parser.parse(ObString("SELECT * FROM generator(0)"), parsed));
+      if (OB_SUCC(ret)) {
+        replace_description_call(parsed.result_tree_, const_cast<ParseNode *>(argument));
+        ObResolverParams bind_params = params_;
+        ObSelectResolver binder(bind_params);
+        OZ (binder.resolve(*parsed.result_tree_->children_[0]));
+        ObSelectStmt *bound = binder.get_select_stmt();
+        CK (bound != nullptr);
+        for (int64_t i = 0; OB_SUCC(ret) && i < bound->get_select_item_size(); ++i) {
+          OZ (names.push_back(bound->get_select_item(i).alias_name_));
+          OZ (types.push_back(bound->get_select_item(i).expr_->get_data_type()));
+        }
+      }
+    }
+  }
+  int64_t rows = 0;
+  for (int64_t i = 0; OB_SUCC(ret) && i < descriptors.count(); ++i) {
+    const TableFunctionDescriptor &descriptor = *descriptors.at(i);
+    const int64_t columns = concrete ? names.count() : descriptor.column_count_;
+    const int64_t count = node.type_ == T_SHOW_TABLE_FUNCTIONS || columns == 0 ? 1 : columns;
+    for (int64_t j = 0; OB_SUCC(ret) && j < count; ++j) {
+      if (rows++ != 0) { OZ (sql.append(" UNION ALL ")); }
+      OZ (sql.append("SELECT "));
+      if (node.type_ == T_SHOW_TABLE_FUNCTIONS) {
+        OZ (append_table_function_text(sql, ObString::make_string(descriptor.name_)));
+        OZ (sql.append(" AS function_name,"));
+      }
+      OZ (append_table_function_text(sql, ObString::make_string(descriptor.signature_)));
+      OZ (sql.append(" AS signature,"));
+      if (node.type_ == T_DESCRIBE_TABLE_FUNCTION) {
+        if (columns == 0) {
+          OZ (sql.append("NULL AS column_position,NULL AS column_name,NULL AS column_type,"));
+        } else {
+          OZ (sql.append_fmt("%ld AS column_position,", j + 1));
+          OZ (append_table_function_text(sql, concrete ? names.at(j) : ObString::make_string(descriptor.columns_[j].name_)));
+          OZ (sql.append(" AS column_name,"));
+          const ObObjType type = concrete ? types.at(j) : descriptor.columns_[j].type_.get_obj_type();
+          OZ (append_table_function_text(sql, ObString::make_string(ob_obj_type_str(type))));
+          OZ (sql.append(" AS column_type,"));
+        }
+      }
+      OZ (append_table_function_text(sql, ObString::make_string(descriptor.description_)));
+      OZ (sql.append(" AS description"));
+    }
+  }
+  if (OB_SUCC(ret)) { ret = parse_and_resolve_select_sql(sql.string()); }
+  return ret;
+}
+
 int ObShowResolver::resolve(const ParseNode &parse_tree)
 {
+  if (parse_tree.type_ == T_SHOW_TABLE_FUNCTIONS || parse_tree.type_ == T_DESCRIBE_TABLE_FUNCTION) {
+    return resolve_table_function_description(parse_tree);
+  }
   int ret = OB_SUCCESS;
   uint64_t real_id = OB_INVALID_ID;
   ObString database_name;

@@ -150,6 +150,7 @@ struct TableItem
     snapshot_query_expr_ = nullptr;
     snapshot_query_type_ = SnapshotQueryType::NOT_USING;
     function_table_expr_ = nullptr;
+    table_function_id_ = 0;
     ddl_schema_version_ = 0;
     ddl_table_id_ = common::OB_INVALID_ID;
     json_table_def_ = nullptr;
@@ -293,6 +294,9 @@ struct TableItem
   ObRawExpr *snapshot_query_expr_;
   SnapshotQueryType snapshot_query_type_;
   ObRawExpr *function_table_expr_;
+  uint64_t table_function_id_;
+  common::ObSEArray<int64_t, 4> function_argument_column_counts_;
+  common::ObSEArray<common::ObString, 8> function_column_names_;
   int64_t ddl_schema_version_;
   int64_t ddl_table_id_;
   // table partition
