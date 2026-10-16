@@ -26,4 +26,8 @@ SHOW 矩阵包括普通/完整表列表及 LIKE、列信息、索引、数据库
 - `cutover-mysqltest-check-privilege-record.log`、`cutover-mysqltest-check-privilege-verify.log`：实际 mysqltest 记录和复验。
 - `cutover-consumer-cleanup.json`：清理后的元数据核对。
 
-这些结果针对首个完整切换构建。集成后的最终重启/修复构建应重新执行相关检查；历史基线问题不作为迁移新增失败，未运行的旧全量 schema 快照不能据此宣称已通过。
+完成集成构建 `77d63463a` 的实例重启后，重新使用合入分支的 `view/check_privilege.test` 和预期文件执行 mysqltest，结果为 `ok`；再次执行全部 139 个系统视图，仍为 138 成功、1 个相同的基线错误，成功视图的列名及顺序均无变化。复验后检查测试库和用户已清理。
+
+最终复验证据：`final-mysqltest-check-privilege-77d63463a.log`、`final-view-execution-77d63463a.log`、`final-view-execution-77d63463a.json`，均在上述证据目录。
+
+历史基线问题不作为迁移新增失败，未运行的旧全量 schema 快照不能据此宣称已通过。
