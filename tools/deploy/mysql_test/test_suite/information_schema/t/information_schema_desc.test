@@ -19,6 +19,11 @@ desc global_variables;
 desc key_column_usage;
 desc partitions;
 desc processlist;
+# Function output types retain the same string/numeric coercibility as table columns.
+select coercibility(user_client_ip) as ip_coercibility,
+       coercibility(user_client_port) as port_coercibility,
+       charset(concat(user_client_ip, ':', user_client_port)) as host_charset
+from processlist() where id = connection_id();
 desc schema_privileges;
 desc schemata;
 desc session_status;
