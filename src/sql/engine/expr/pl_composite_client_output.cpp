@@ -29,9 +29,10 @@ class CompositeJsonWriter final
 {
 public:
   CompositeJsonWriter(ObIAllocator &allocator, const pl::ObPLINS *type_namespace,
-                      ObBasicSessionInfo &session, const ObLobReadOptions *lob_options)
+                      ObBasicSessionInfo &session, const ObLobReadOptions *lob_options,
+                      ObExecContext *exec_ctx)
       : allocator_(allocator), type_namespace_(type_namespace), session_(session),
-        lob_options_(lob_options), buffer_(&allocator),
+        lob_options_(lob_options), exec_ctx_(exec_ctx), buffer_(&allocator),
         max_depth_(ObJsonExprHelper::get_json_max_depth_config()) {}
 
   int write(const ObObj &value, uint32_t depth = 0, bool is_boolean = false)
@@ -77,7 +78,12 @@ public:
       datum.ptr_ = datum_buffer;
       ObObjMeta meta = value.get_meta();
       ObIJsonBase *json = nullptr;
-      if (OB_FAIL(datum.from_obj(value))) {
+      // In-memory PL values do not require a storage runtime. Resolve the LOB
+      // service only for a leaf whose JSON conversion can read LOB data.
+      if (is_lob_storage(value.get_type()) && nullptr == lob_options_
+          && nullptr != exec_ctx_
+          && OB_FAIL(exec_ctx_->get_lob_read_options(lob_options_))) {
+      } else if (OB_FAIL(datum.from_obj(value))) {
       } else if (OB_FAIL(ObJsonExprHelper::datum_to_json_val(
                      &datum, meta, &allocator_, &session_, json, is_boolean,
                      false, true, false, lob_options_))) {
@@ -168,9 +174,35 @@ private:
   const pl::ObPLINS *type_namespace_;
   ObBasicSessionInfo &session_;
   const ObLobReadOptions *lob_options_;
+  ObExecContext *exec_ctx_;
   ObJsonBuffer buffer_;
   const uint32_t max_depth_;
 };
+int convert_composite(ObObj &value, ObIAllocator &allocator,
+                      const pl::ObPLINS *type_namespace, ObBasicSessionInfo &session,
+                      const ObLobReadOptions *lob_options, ObExecContext *exec_ctx)
+{
+  int ret = OB_SUCCESS;
+  if (PlCompositeClientOutput::needs_conversion(value.get_meta())) {
+    // Do not turn an atomically NULL composite into a non-NULL string "null".
+    if (pl::ObPLComposite::obj_is_null(&value)) {
+      value.set_null();
+    } else {
+      CompositeJsonWriter writer(allocator, type_namespace, session, lob_options, exec_ctx);
+      ObString result;
+      if (OB_FAIL(writer.write(value))) {
+      } else if (OB_FAIL(writer.take_result(result))) {
+      } else {
+        // The buffer belongs to the caller's output allocator. The original PL
+        // object and its member values are never changed or freed here.
+        value.set_varchar(result);
+        value.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+        value.set_collation_level(CS_LEVEL_IMPLICIT);
+      }
+    }
+  }
+  return ret;
+}
 } // namespace
 
 bool PlCompositeClientOutput::needs_conversion(const ObObjMeta &meta)
@@ -187,26 +219,7 @@ int PlCompositeClientOutput::convert(ObObj &value, ObIAllocator &allocator,
                                     ObBasicSessionInfo &session,
                                     const ObLobReadOptions *lob_options)
 {
-  int ret = OB_SUCCESS;
-  if (needs_conversion(value.get_meta())) {
-    // Do not turn an atomically NULL composite into a non-NULL string "null".
-    if (pl::ObPLComposite::obj_is_null(&value)) {
-      value.set_null();
-    } else {
-      CompositeJsonWriter writer(allocator, type_namespace, session, lob_options);
-      ObString result;
-      if (OB_FAIL(writer.write(value))) {
-      } else if (OB_FAIL(writer.take_result(result))) {
-      } else {
-        // The buffer belongs to the caller's output allocator. The original PL
-        // object and its member values are never changed or freed here.
-        value.set_varchar(result);
-        value.set_collation_type(CS_TYPE_UTF8MB4_BIN);
-        value.set_collation_level(CS_LEVEL_IMPLICIT);
-      }
-    }
-  }
-  return ret;
+  return convert_composite(value, allocator, type_namespace, session, lob_options, nullptr);
 }
 
 int PlCompositeClientOutput::convert(ObObj &value, ObIAllocator &allocator,
@@ -214,14 +227,12 @@ int PlCompositeClientOutput::convert(ObObj &value, ObIAllocator &allocator,
 {
   int ret = OB_SUCCESS;
   ObSQLSessionInfo *session = exec_ctx.get_my_session();
-  const ObLobReadOptions *lob_options = nullptr;
   if (!needs_conversion(value.get_meta())) {
   } else if (OB_ISNULL(session)) {
     ret = OB_ERR_UNEXPECTED;
-  } else if (OB_FAIL(exec_ctx.get_lob_read_options(lob_options))) {
   } else if (nullptr != session->get_pl_context()) {
-    ret = convert(value, allocator, session->get_pl_context()->get_current_ctx(),
-                  *session, lob_options);
+    ret = convert_composite(value, allocator, session->get_pl_context()->get_current_ctx(),
+                            *session, nullptr, &exec_ctx);
   } else {
     pl::ObPLPackageGuard *package_guard = nullptr;
     if (OB_ISNULL(exec_ctx.get_sql_ctx())
@@ -240,7 +251,7 @@ int PlCompositeClientOutput::convert(ObObj &value, ObIAllocator &allocator,
       resolve_ctx.params_.pl_engine_ = exec_ctx.get_pl_engine();
       resolve_ctx.params_.srs_provider_ = exec_ctx.get_srs_provider();
       resolve_ctx.params_.lob_read_service_ = exec_ctx.get_lob_read_service();
-      ret = convert(value, allocator, &resolve_ctx, *session, lob_options);
+      ret = convert_composite(value, allocator, &resolve_ctx, *session, nullptr, &exec_ctx);
     }
   }
   return ret;
