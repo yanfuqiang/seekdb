@@ -3716,27 +3716,75 @@ int ObDMLResolver::bind_hybrid_table_function(const TableFunctionCall &call, Tab
   int ret = OB_SUCCESS;
   ParseNode node = {};
   ParseNode *children[3] = {};
+  ParseNode literals[2] = {};
   ParseNode empty_alias = {};
   node.type_ = T_HYBRID_SEARCH_EXPRESSION;
   node.num_child_ = 3;
   node.children_ = children;
-  children[0] = call.arguments_->children_[0];
-  children[1] = call.arguments_->children_[1];
-  // SQL expression parsing wraps a user variable in GET_USER_VAR.
-  if (children[1]->type_ == T_OP_GET_USER_VAR) { children[1] = children[1]->children_[0]; }
+  for (int64_t i = 0; OB_SUCC(ret) && i < 2; ++i) {
+    const ParseNode *argument = call.arguments_->children_[i];
+    ObObj value;
+    if (argument->type_ == T_VARCHAR) {
+      children[i] = const_cast<ParseNode *>(argument);
+    } else {
+      // Only a direct user variable is a supported mutable binding input.
+      // Prepared statements must keep their structural arguments immutable.
+      if (argument->type_ == T_OP_GET_USER_VAR) {
+        argument = argument->children_[0];
+      }
+      if (argument->type_ == T_USER_VARIABLE_IDENTIFIER) {
+        if (params_.is_prepare_protocol_) {
+          ret = OB_NOT_SUPPORTED;
+          LOG_USER_ERROR(OB_NOT_SUPPORTED, "mutable binding parameters in prepared table functions");
+        } else {
+          ObSessionVariable variable;
+          OZ (session_info_->get_user_variable(
+              ObString(argument->str_len_, argument->str_value_), variable));
+          if (OB_SUCC(ret)) { value = variable.value_; }
+        }
+      } else {
+        ObRawExpr *expression = nullptr;
+        OZ (resolve_sql_expr(*argument, expression));
+        OZ (expression->deduce_type(session_info_));
+        OZ (expression->extract_info());
+        ObSEArray<const ObRawExpr *, 8> pending;
+        OZ (pending.push_back(expression));
+        for (int64_t j = 0; OB_SUCC(ret) && j < pending.count(); ++j) {
+          const ObRawExpr &part = *pending.at(j);
+          if (!part.is_static_const_expr() || !part.is_deterministic() ||
+              part.get_expr_type() == T_QUESTIONMARK || part.get_expr_type() == T_FUN_UDF ||
+              part.get_expr_type() == T_OP_GET_USER_VAR || part.has_flag(CNT_STATE_FUNC) ||
+              part.has_flag(CNT_RAND_FUNC) || part.has_flag(CNT_CUR_TIME) ||
+              part.has_flag(CNT_VOLATILE_CONST) || part.has_flag(CNT_SUB_QUERY)) {
+            ret = OB_NOT_SUPPORTED;
+            LOG_USER_ERROR(OB_NOT_SUPPORTED, "nonconstant binding parameters in table functions");
+          }
+          for (int64_t k = 0; OB_SUCC(ret) && k < part.get_param_count(); ++k) {
+            OZ (pending.push_back(part.get_param_expr(k)));
+          }
+        }
+        const ParamStore no_parameters;
+        OZ (ObSQLUtils::calc_const_expr(session_info_, *expression, value, *allocator_, no_parameters,
+            session_info_->get_cur_exec_ctx()));
+      }
+      if (OB_SUCC(ret) && !value.is_varchar()) {
+        ret = OB_ERR_INVALID_TYPE_FOR_ARGUMENT;
+      }
+      ObString text;
+      OZ (ob_write_string(*allocator_, value.get_string(), text));
+      if (OB_SUCC(ret)) {
+        literals[i].type_ = T_VARCHAR;
+        literals[i].str_value_ = text.ptr();
+        literals[i].str_len_ = text.length();
+        children[i] = &literals[i];
+      }
+    }
+  }
   empty_alias.type_ = T_IDENT;
   empty_alias.str_value_ = "hybrid_search";
   empty_alias.str_len_ = 13;
   children[2] = call.alias_ == nullptr ? &empty_alias : const_cast<ParseNode *>(call.alias_);
-  if (children[0]->type_ != T_VARCHAR ||
-      (children[1]->type_ != T_VARCHAR && children[1]->type_ != T_USER_VARIABLE_IDENTIFIER)) {
-    ret = OB_ERR_INVALID_TYPE_FOR_ARGUMENT;
-  } else if (params_.is_prepare_protocol_ && children[1]->type_ == T_USER_VARIABLE_IDENTIFIER) {
-    ret = OB_NOT_SUPPORTED;
-    LOG_USER_ERROR(OB_NOT_SUPPORTED, "mutable binding parameters in prepared table functions");
-  } else {
-    ret = resolve_hybrid_search_item(node, item);
-  }
+  OZ (resolve_hybrid_search_item(node, item));
   return ret;
 }
 
