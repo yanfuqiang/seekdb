@@ -5511,6 +5511,9 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
     OZ (spec.lookup_column_ids_.init(op.get_filter_exprs().count()));
     const TableFunctionDescriptor *definition = TableFunctionRegistry::find(spec.function_id_);
     CK (definition != nullptr);
+    if (OB_SUCC(ret) && definition->compile_options_ != nullptr) {
+      OZ (definition->compile_options_(*table, phy_plan_->get_allocator(), spec.options_));
+    }
     // Only filters already assigned to this scan can constrain its input. Keep
     // every predicate in the normal SQL filter list for semantic rechecking.
     for (int64_t i = 0; OB_SUCC(ret) && i < op.get_filter_exprs().count(); ++i) {
@@ -5550,6 +5553,7 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
         ObExpr *expr = nullptr;
         OZ (mark_expr_self_produced(column->expr_));
         OZ (generate_rt_expr(*column->expr_, expr));
+        if (OB_SUCC(ret) && is_lob_storage(expr->obj_meta_.get_type())) { expr->obj_meta_.set_has_lob_header(); }
         OZ (spec.column_exprs_.push_back(expr));
         OZ (spec.column_ids_.push_back(column->column_id_));
       }

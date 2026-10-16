@@ -19,7 +19,7 @@
 #include "sql/engine/ob_exec_context.h"
 #include "sql/engine/expr/ob_array_expr_utils.h"
 #include "sql/engine/expr/ob_expr_lob_utils.h"
-#include "pl/ob_pl_user_type.h"
+#include "sql/pl/ob_pl_user_type.h"
 
 namespace oceanbase {
 namespace sql {

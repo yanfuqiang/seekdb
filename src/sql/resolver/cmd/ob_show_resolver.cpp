@@ -21,6 +21,7 @@
 #include "sql/resolver/cmd/ob_show_table_status_sql.h"
 #include "sql/printer/ob_schema_printer.h"
 #include "sql/table_function/table_function.h"
+#include "sql/pl/ob_pl_user_type.h"
 
 using namespace oceanbase::common;
 using namespace oceanbase::share;
@@ -142,6 +143,33 @@ int append_table_function_text(ObSqlString &sql, const ObString &text)
   OZ (sql.append("' USING utf8mb4)"));
   return ret;
 }
+int describe_table_function_type(ObResolverParams &params, const ObDataType &type, ObString &name)
+{
+  int ret = OB_SUCCESS;
+  if (type.get_obj_type() == ObExtendType) {
+    const pl::ObUserDefinedType *declaration = nullptr;
+    pl::ObPLPackageGuard guard;
+    OZ (ObResolverUtils::get_user_type(params.allocator_, params.session_info_, params.plan_cache_,
+        params.sql_proxy_, params.schema_checker_->get_schema_guard(), guard, type.get_udt_id(), declaration));
+    CK (declaration != nullptr);
+    if (OB_SUCC(ret)) { OZ (ob_write_string(*params.allocator_, declaration->get_name(), name)); }
+  } else if (type.get_obj_type() == ObCollectionSQLType) {
+    ObSubSchemaValue value;
+    OZ (params.session_info_->get_cur_exec_ctx()->get_sqludt_meta_by_subschema_id(type.get_meta_type().get_subschema_id(), value));
+    if (OB_SUCC(ret)) {
+      const ObSqlCollectionInfo *declaration = reinterpret_cast<const ObSqlCollectionInfo *>(value.value_);
+      OZ (ob_write_string(*params.allocator_, declaration->get_def_string(), name));
+    }
+  } else {
+    char buffer[1024];
+    int64_t length = 0;
+    ObSEArray<ObString, 0> extra;
+    OZ (ob_sql_type_str(type.get_meta_type(), type.get_accuracy(), extra, LS_BYTE, buffer, sizeof(buffer), length));
+    OZ (ob_write_string(*params.allocator_, ObString(length, buffer), name));
+  }
+  return ret;
+}
+
 void replace_description_call(ParseNode *&node, ParseNode *call)
 {
   if (node != nullptr) {
@@ -158,7 +186,7 @@ int ObShowResolver::resolve_table_function_description(const ParseNode &node)
   int ret = OB_SUCCESS;
   ObSEArray<const TableFunctionDescriptor *, 16> descriptors;
   ObSEArray<ObString, 16> names;
-  ObSEArray<ObObjType, 16> types;
+  ObSEArray<ObString, 16> types;
   ObSqlString sql;
   bool concrete = false;
   if (node.type_ == T_SHOW_TABLE_FUNCTIONS) {
@@ -173,8 +201,8 @@ int ObShowResolver::resolve_table_function_description(const ParseNode &node)
       (concrete ? argument->children_[0] : argument);
     const TableFunctionDescriptor *descriptor = TableFunctionRegistry::find(ObString(name->str_len_, name->str_value_));
     if (descriptor == nullptr) {
-      ret = OB_ERR_SP_DOES_NOT_EXIST;
-      LOG_USER_ERROR(OB_ERR_SP_DOES_NOT_EXIST, "TABLE FUNCTION", static_cast<int>(name->str_len_), name->str_value_);
+      ret = OB_ERR_FUNCTION_UNKNOWN;
+      LOG_USER_ERROR(OB_ERR_FUNCTION_UNKNOWN, "TABLE FUNCTION", static_cast<int>(name->str_len_), name->str_value_);
     } else { OZ (descriptors.push_back(descriptor)); }
     if (OB_SUCC(ret) && concrete) {
       ObParser parser(*allocator_, session_info_->get_sql_mode(), session_info_->get_charsets4parser());
@@ -189,7 +217,12 @@ int ObShowResolver::resolve_table_function_description(const ParseNode &node)
         CK (bound != nullptr);
         for (int64_t i = 0; OB_SUCC(ret) && i < bound->get_select_item_size(); ++i) {
           OZ (names.push_back(bound->get_select_item(i).alias_name_));
-          OZ (types.push_back(bound->get_select_item(i).expr_->get_data_type()));
+          ObDataType type;
+          type.set_meta_type(bound->get_select_item(i).expr_->get_result_meta());
+          type.set_accuracy(bound->get_select_item(i).expr_->get_accuracy());
+          ObString type_name;
+          OZ (describe_table_function_type(params_, type, type_name));
+          OZ (types.push_back(type_name));
         }
       }
     }
@@ -215,8 +248,10 @@ int ObShowResolver::resolve_table_function_description(const ParseNode &node)
           OZ (sql.append_fmt("%ld AS column_position,", j + 1));
           OZ (append_table_function_text(sql, concrete ? names.at(j) : ObString::make_string(descriptor.columns_[j].name_)));
           OZ (sql.append(" AS column_name,"));
-          const ObObjType type = concrete ? types.at(j) : descriptor.columns_[j].type_.get_obj_type();
-          OZ (append_table_function_text(sql, ObString::make_string(ob_obj_type_str(type))));
+          ObString type_name;
+          if (concrete) { type_name = types.at(j); }
+          else { OZ (describe_table_function_type(params_, descriptor.columns_[j].type_, type_name)); }
+          OZ (append_table_function_text(sql, type_name));
           OZ (sql.append(" AS column_type,"));
         }
       }
@@ -1799,7 +1834,7 @@ int ObShowResolver::resolve_show_from_routine(const ParseNode *from_routine_node
     }
     if (OB_SUCC(ret)) {
       if (OB_UNLIKELY(NULL == routine_info)) {
-        ret = OB_ERR_SP_DOES_NOT_EXIST;
+        ret = OB_ERR_FUNCTION_UNKNOWN;
       } else {
         show_routine_id = routine_info->get_routine_id();
         routine_type = routine_info->get_routine_type();

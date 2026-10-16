@@ -25,6 +25,7 @@ namespace oceanbase {
 namespace sql {
 class ObDMLResolver;
 class ObExecContext;
+class ObExpr;
 class ObSQLSessionInfo;
 struct TableItem;
 struct TableFunctionDescriptor;
@@ -34,6 +35,7 @@ struct TableFunctionColumn
   const char *name_;
   common::ObDataType type_;
   uint64_t id_;
+  bool nullable_ = true;
 };
 
 // All parser forms are adapted to this call before registry lookup. Options are
@@ -63,6 +65,9 @@ struct TableFunctionScanContext
   const common::ObIArray<common::ObObj> &arguments_;
   const common::ObIArray<int64_t> &argument_column_counts_;
   const common::ObIArray<TableFunctionLookup> &lookups_;
+  const common::ObString &options_;
+  const common::ObIArray<ObExpr *> &argument_exprs_;
+  const common::ObIArray<ObExpr *> &column_exprs_;
 };
 
 class ITableFunctionScan
@@ -76,6 +81,7 @@ public:
 };
 
 using TableFunctionBind = int (*)(ObDMLResolver &, const TableFunctionCall &, TableItem *&);
+using TableFunctionCompileOptions = int (*)(const TableItem &, common::ObIAllocator &, common::ObString &);
 using TableFunctionScanFactory = int (*)(const TableFunctionScanContext &, ITableFunctionScan *&);
 
 struct TableFunctionDescriptor
@@ -93,12 +99,17 @@ struct TableFunctionDescriptor
   const char *required_database_ = nullptr;
   const uint64_t *lookup_column_ids_ = nullptr;
   int64_t lookup_column_count_ = 0;
+  TableFunctionCompileOptions compile_options_ = nullptr;
+  bool requires_all_columns_ = false;
 };
 
 constexpr uint64_t UNNEST_FUNCTION_ID = 1;
 constexpr uint64_t GENERATOR_FUNCTION_ID = 2;
 constexpr uint64_t JSON_TABLE_FUNCTION_ID = 3;
 constexpr uint64_t HYBRID_SEARCH_FUNCTION_ID = 4;
+
+int compile_json_table_options(const TableItem &, common::ObIAllocator &, common::ObString &);
+int create_json_table_scan(const TableFunctionScanContext &, ITableFunctionScan *&);
 
 int create_collection_table_scan(const TableFunctionScanContext &, ITableFunctionScan *&);
 int create_generator_table_scan(const TableFunctionScanContext &, ITableFunctionScan *&);

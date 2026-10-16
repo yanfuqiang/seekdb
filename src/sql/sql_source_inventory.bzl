@@ -227,6 +227,7 @@ SQL_UNITY_GROUPS = [
             "src/sql/engine/basic/ob_function_table_op.cpp",
             "src/sql/table_function/table_function.cpp",
             "src/sql/table_function/table_function_scan.cpp",
+            "src/sql/table_function/json_table_scan.cpp",
             "src/sql/engine/basic/ob_group_join_buffer.cpp",
             "src/sql/engine/basic/ob_hash_partitioning_infrastructure_op.cpp",
             "src/sql/engine/basic/ob_json_table_op.cpp",

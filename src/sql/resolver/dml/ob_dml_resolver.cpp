@@ -3498,11 +3498,12 @@ int ObDMLResolver::resolve_registered_table_function(const ParseNode &node, Tabl
     call.descriptor_ = TableFunctionRegistry::find(call.name_);
     const int64_t argc = call.arguments_ == nullptr ? 0 : call.arguments_->num_child_;
     if (call.descriptor_ == nullptr) {
-      ret = OB_ERR_SP_DOES_NOT_EXIST;
-      LOG_USER_ERROR(OB_ERR_SP_DOES_NOT_EXIST, "TABLE FUNCTION", call.name_.length(), call.name_.ptr());
+      ret = OB_ERR_FUNCTION_UNKNOWN;
+      LOG_USER_ERROR(OB_ERR_FUNCTION_UNKNOWN, "TABLE FUNCTION", call.name_.length(), call.name_.ptr());
     } else if (argc < call.descriptor_->min_arguments_ ||
                (call.descriptor_->max_arguments_ >= 0 && argc > call.descriptor_->max_arguments_)) {
       ret = OB_ERR_PARAM_SIZE;
+      LOG_USER_ERROR(OB_ERR_PARAM_SIZE, call.name_.length(), call.name_.ptr());
     } else if (OB_FAIL(call.descriptor_->bind_(*this, call, item))) {
     } else if (OB_ISNULL(item)) {
       ret = OB_ERR_UNEXPECTED;
@@ -3523,6 +3524,7 @@ int ObDMLResolver::create_function_scan_item(const TableFunctionCall &call, Tabl
   }
   OZ (params_.expr_factory_->create_raw_expr(T_OP_ROW, arguments));
   const int64_t argc = call.arguments_ == nullptr ? 0 : call.arguments_->num_child_;
+  OZ (arguments->init_param_exprs(argc));
   for (int64_t i = 0; OB_SUCC(ret) && i < argc; ++i) {
     ObRawExpr *arg = nullptr;
     const bool old = params_.is_resolve_table_function_expr_;
@@ -3536,12 +3538,46 @@ int ObDMLResolver::create_function_scan_item(const TableFunctionCall &call, Tabl
   if (OB_SUCC(ret)) {
     item->type_ = TableItem::FUNCTION_TABLE;
     item->table_function_id_ = call.descriptor_->id_;
+    item->table_function_requires_all_columns_ = call.descriptor_->requires_all_columns_;
     item->table_id_ = generate_table_id();
     item->table_name_ = ObString::make_string(call.descriptor_->name_);
     item->alias_name_ = call.alias_ == nullptr ? item->table_name_ :
       ObString(call.alias_->str_len_, call.alias_->str_value_);
     item->function_table_expr_ = arguments;
     OZ (get_stmt()->add_table_item(session_info_, item));
+  }
+  return ret;
+}
+
+int ObDMLResolver::bind_json_table_function(const TableFunctionCall &call, TableItem *&item)
+{
+  int ret = OB_SUCCESS;
+  if (call.options_ == nullptr) { ret = OB_INVALID_ARGUMENT; }
+  else { OZ (resolve_json_table_item(*call.options_, item)); }
+  ObOpRawExpr *arguments = nullptr;
+  OZ (params_.expr_factory_->create_raw_expr(T_OP_ROW, arguments));
+  OZ (arguments->init_param_exprs(1 + 2 * get_stmt()->get_column_size()));
+  if (OB_SUCC(ret)) {
+    OZ (arguments->add_param_expr(item->json_table_def_->doc_exprs_.at(0)));
+    for (int64_t i = 0; OB_SUCC(ret) && i < get_stmt()->get_column_size(); ++i) {
+      ColumnItem *column = get_stmt()->get_column_item(i);
+      if (column->table_id_ == item->table_id_) {
+        ObJtColBaseInfo *definition = item->json_table_def_->all_cols_.at(column->col_idx_);
+        if (column->default_value_expr_ != nullptr) {
+          definition->error_expr_id_ = arguments->get_param_count();
+          OZ (arguments->add_param_expr(column->default_value_expr_));
+        }
+        if (column->default_empty_expr_ != nullptr) {
+          definition->empty_expr_id_ = arguments->get_param_count();
+          OZ (arguments->add_param_expr(column->default_empty_expr_));
+        }
+      }
+    }
+    OZ (arguments->extract_info());
+    item->function_table_expr_ = arguments;
+    item->table_function_id_ = call.descriptor_->id_;
+    item->table_function_requires_all_columns_ = call.descriptor_->requires_all_columns_;
+    item->type_ = TableItem::FUNCTION_TABLE;
   }
   return ret;
 }
@@ -3555,6 +3591,7 @@ int ObDMLResolver::bind_fixed_table_function(const TableFunctionCall &call, Tabl
     ColumnItem *bound = nullptr;
     OZ (resolve_function_table_column_item(*item, column.type_.get_meta_type(),
           column.type_.get_accuracy(), ObString::make_string(column.name_), column.id_, bound));
+    if (OB_SUCC(ret) && !column.nullable_) { bound->expr_->set_result_flag(NOT_NULL_FLAG); }
   }
   return ret;
 }
@@ -3592,9 +3629,15 @@ int ObDMLResolver::add_unnest_columns(TableItem &item, ObRawExpr &argument,
     OZ (session_info_->get_cur_exec_ctx()->get_sqludt_meta_by_subschema_id(argument.get_subschema_id(), value));
     if (OB_SUCC(ret)) {
       const ObSqlCollectionInfo *info = reinterpret_cast<const ObSqlCollectionInfo *>(value.value_);
-      const ObCollectionArrayType *array = static_cast<const ObCollectionArrayType *>(info->collection_meta_);
+      const ObCollectionArrayType *array = nullptr;
+      if (info == nullptr || info->collection_meta_ == nullptr) { ret = OB_ERR_UNEXPECTED; }
+      else if (info->collection_meta_->type_id_ != ObNestedType::OB_ARRAY_TYPE &&
+               info->collection_meta_->type_id_ != ObNestedType::OB_VECTOR_TYPE) {
+        ret = OB_ERR_INVALID_TYPE_FOR_ARGUMENT;
+      } else { array = static_cast<const ObCollectionArrayType *>(info->collection_meta_); }
       ObDataType type;
-      if (array->element_type_->type_id_ == ObNestedType::OB_BASIC_TYPE) {
+      if (OB_FAIL(ret)) {
+      } else if (array->element_type_->type_id_ == ObNestedType::OB_BASIC_TYPE) {
         type = static_cast<const ObCollectionBasicType *>(array->element_type_)->basic_meta_;
       } else {
         ObString child;
@@ -3712,7 +3755,10 @@ int ObDMLResolver::apply_table_function_aliases(const TableFunctionCall &call, T
     }
   }
   const int64_t aliases = call.column_aliases_ == nullptr ? 0 : call.column_aliases_->num_child_;
-  if (aliases > names.count()) { ret = OB_ERR_PARAM_SIZE; }
+  if (aliases > names.count()) {
+    ret = OB_ERR_PARAM_SIZE;
+    LOG_USER_ERROR(OB_ERR_PARAM_SIZE, call.name_.length(), call.name_.ptr());
+  }
   for (int64_t i = 0; OB_SUCC(ret) && i < aliases; ++i) {
     const ParseNode *alias = call.column_aliases_->children_[i];
     names.at(i).assign_ptr(alias->str_value_, alias->str_len_);
@@ -3732,7 +3778,7 @@ int ObDMLResolver::apply_table_function_aliases(const TableFunctionCall &call, T
     }
   } else if (OB_SUCC(ret)) {
     if (item.is_function_table()) { OZ (item.function_column_names_.assign(names)); }
-    if (item.is_json_table()) {
+    if (item.json_table_def_ != nullptr) {
       int64_t index = 0;
       for (int64_t i = 0; i < item.json_table_def_->all_cols_.count(); ++i) {
         ObJtColBaseInfo *column = item.json_table_def_->all_cols_.at(i);

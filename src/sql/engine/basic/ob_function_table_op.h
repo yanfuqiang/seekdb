@@ -40,6 +40,7 @@ public:
   common::ObFixedArray<ObExpr*, common::ObIAllocator> column_exprs_;
   bool has_correlated_expr_;
   uint64_t function_id_;
+  common::ObString options_;
   common::ObFixedArray<ObExpr*, common::ObIAllocator> argument_exprs_;
   common::ObFixedArray<uint64_t, common::ObIAllocator> column_ids_;
   common::ObFixedArray<int64_t, common::ObIAllocator> argument_column_counts_;

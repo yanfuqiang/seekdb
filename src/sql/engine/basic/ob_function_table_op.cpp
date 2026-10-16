@@ -28,7 +28,7 @@ namespace sql
 {
 
 OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_,
-                    function_id_, argument_exprs_, column_ids_, argument_column_counts_, lookup_exprs_, lookup_column_ids_);
+                    function_id_, argument_exprs_, column_ids_, argument_column_counts_, lookup_exprs_, lookup_column_ids_, options_);
 
 int ObFunctionTableOp::inner_open()
 {
@@ -73,7 +73,8 @@ int ObFunctionTableOp::open_scan()
   } else if (OB_FAIL(evaluate_arguments())) {
   } else {
     TableFunctionScanContext context{ctx_, ctx_.get_allocator(), *descriptor,
-      MY_SPEC.column_ids_, arguments_, MY_SPEC.argument_column_counts_, lookups_};
+      MY_SPEC.column_ids_, arguments_, MY_SPEC.argument_column_counts_, lookups_,
+      MY_SPEC.options_, MY_SPEC.argument_exprs_, MY_SPEC.column_exprs_};
     OZ (descriptor->scan_factory_(context, scan_));
     CK (scan_ != nullptr);
     OZ (scan_->open());

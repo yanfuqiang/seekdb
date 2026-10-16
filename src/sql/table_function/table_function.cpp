@@ -31,7 +31,7 @@ int bind_unnest(ObDMLResolver &resolver, const TableFunctionCall &call, TableIte
 int bind_generator(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
 { return resolver.bind_generator_table_function(call, item); }
 int bind_json_table(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
-{ return call.options_ == nullptr ? OB_INVALID_ARGUMENT : resolver.resolve_json_table_item(*call.options_, item); }
+{ return resolver.bind_json_table_function(call, item); }
 int bind_hybrid(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
 { return resolver.bind_hybrid_table_function(call, item); }
 TableFunctionColumn generator_column()
@@ -40,6 +40,7 @@ TableFunctionColumn generator_column()
   result.name_ = "generator";
   result.id_ = OB_APP_MIN_COLUMN_ID;
   result.type_.set_int();
+  result.nullable_ = false;
   return result;
 }
 const TableFunctionColumn GENERATOR_COLUMNS[] = {generator_column()};
@@ -50,7 +51,7 @@ const TableFunctionDescriptor BUILTINS[] = {
   {GENERATOR_FUNCTION_ID, "generator", "generator(n)", "Integers from 1 to n.",
    1, 1, GENERATOR_COLUMNS, 1, bind_generator, create_generator_table_scan},
   {JSON_TABLE_FUNCTION_ID, "json_table", "json_table(document, path COLUMNS (...))",
-   "Columns are declared by COLUMNS.", 0, -1, nullptr, 0, bind_json_table, nullptr},
+   "Columns are declared by COLUMNS.", 0, -1, nullptr, 0, bind_json_table, create_json_table_scan, nullptr, nullptr, 0, compile_json_table_options, true},
   {HYBRID_SEARCH_FUNCTION_ID, "hybrid_search", "hybrid_search(table_name, configuration)",
    "Columns come from the bound search query.", 2, 2, nullptr, 0, bind_hybrid, nullptr}
 };
@@ -62,6 +63,7 @@ int bind_fixed_table_function(ObDMLResolver &resolver, const TableFunctionCall &
 int TableFunctionRegistry::register_functions(const TableFunctionDescriptor *definitions, int64_t count)
 {
   int ret = OB_SUCCESS;
+  if (system_definitions == definitions && definitions != nullptr && system_definition_count == count) { return OB_SUCCESS; }
   if (system_definitions != nullptr || definitions == nullptr || count < 0) {
     ret = OB_INVALID_ARGUMENT;
   }
