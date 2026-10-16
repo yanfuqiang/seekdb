@@ -543,6 +543,7 @@ SQL_UNITY_GROUPS = [
             "src/sql/engine/expr/ob_expr_operator_factory.cpp",
             "src/sql/engine/expr/ob_expr_or.cpp",
             "src/sql/engine/expr/ob_expr_output_pack.cpp",
+            "src/sql/engine/expr/pl_composite_client_output.cpp",
             "src/sql/engine/expr/ob_lob_result_materializer.cpp",
             "src/sql/engine/expr/ob_expr_pad.cpp",
             "src/sql/engine/expr/ob_expr_mysql_port.cpp",
