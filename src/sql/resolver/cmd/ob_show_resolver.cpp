@@ -199,11 +199,20 @@ int ObShowResolver::resolve_table_function_description(const ParseNode &node)
     json_name.str_len_ = 10;
     const ParseNode *name = argument->type_ == T_JSON_TABLE_EXPRESSION ? &json_name :
       (concrete ? argument->children_[0] : argument);
-    const TableFunctionDescriptor *descriptor = TableFunctionRegistry::find(ObString(name->str_len_, name->str_value_));
-    if (descriptor == nullptr) {
-      ret = OB_ERR_FUNCTION_UNKNOWN;
-      LOG_USER_ERROR(OB_ERR_FUNCTION_UNKNOWN, "TABLE FUNCTION", static_cast<int>(name->str_len_), name->str_value_);
-    } else { OZ (descriptors.push_back(descriptor)); }
+    const ObString function_name(name->str_len_, name->str_value_);
+    if (concrete) {
+      const ParseNode *arguments = argument->type_ == T_JSON_TABLE_EXPRESSION ? nullptr : argument->children_[1];
+      const int64_t argc = arguments == nullptr ? 0 : arguments->num_child_;
+      const TableFunctionDescriptor *descriptor = nullptr;
+      OZ (TableFunctionRegistry::match(function_name, argc, descriptor));
+      OZ (descriptors.push_back(descriptor));
+    } else {
+      OZ (TableFunctionRegistry::get_overloads(function_name, descriptors));
+      if (OB_SUCC(ret) && descriptors.empty()) {
+        ret = OB_ERR_FUNCTION_UNKNOWN;
+        LOG_USER_ERROR(OB_ERR_FUNCTION_UNKNOWN, "TABLE FUNCTION", function_name.length(), function_name.ptr());
+      }
+    }
     if (OB_SUCC(ret) && concrete) {
       ObParser parser(*allocator_, session_info_->get_sql_mode(), session_info_->get_charsets4parser());
       ParseResult parsed;

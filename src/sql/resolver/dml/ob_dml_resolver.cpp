@@ -3495,15 +3495,8 @@ int ObDMLResolver::resolve_registered_table_function(const ParseNode &node, Tabl
     call.column_aliases_ = node.children_[3];
   }
   if (OB_SUCC(ret)) {
-    call.descriptor_ = TableFunctionRegistry::find(call.name_);
     const int64_t argc = call.arguments_ == nullptr ? 0 : call.arguments_->num_child_;
-    if (call.descriptor_ == nullptr) {
-      ret = OB_ERR_FUNCTION_UNKNOWN;
-      LOG_USER_ERROR(OB_ERR_FUNCTION_UNKNOWN, "TABLE FUNCTION", call.name_.length(), call.name_.ptr());
-    } else if (argc < call.descriptor_->min_arguments_ ||
-               (call.descriptor_->max_arguments_ >= 0 && argc > call.descriptor_->max_arguments_)) {
-      ret = OB_ERR_PARAM_SIZE;
-      LOG_USER_ERROR(OB_ERR_PARAM_SIZE, call.name_.length(), call.name_.ptr());
+    if (OB_FAIL(TableFunctionRegistry::match(call.name_, argc, call.descriptor_))) {
     } else if (OB_FAIL(call.descriptor_->bind_(*this, call, item))) {
     } else if (OB_ISNULL(item)) {
       ret = OB_ERR_UNEXPECTED;

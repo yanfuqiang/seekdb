@@ -120,7 +120,10 @@ public:
   // Called once by observer startup before any SQL is served. Definitions live
   // for the process lifetime; registration never creates schema objects.
   static int register_functions(const TableFunctionDescriptor *definitions, int64_t count);
-  static const TableFunctionDescriptor *find(const common::ObString &name);
+  static int get_overloads(const common::ObString &name,
+      common::ObIArray<const TableFunctionDescriptor *> &definitions);
+  static int match(const common::ObString &name, int64_t argument_count,
+      const TableFunctionDescriptor *&definition);
   static const TableFunctionDescriptor *find(uint64_t id);
   static int get_all(common::ObIArray<const TableFunctionDescriptor *> &definitions);
 };

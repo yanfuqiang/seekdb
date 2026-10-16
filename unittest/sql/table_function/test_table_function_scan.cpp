@@ -17,6 +17,39 @@ namespace {
 using namespace common;
 using namespace pl;
 
+TEST(TableFunctionRegistryTest, arity_overloads_are_discoverable_and_ambiguity_is_an_error)
+{
+  static const TableFunctionDescriptor definitions[] = {
+    {900001, "registry_test", "registry_test()", "zero inputs", 0, 0,
+      nullptr, 0, bind_fixed_table_function, create_generator_table_scan},
+    {900002, "registry_test", "registry_test(value)", "one input", 1, 1,
+      nullptr, 0, bind_fixed_table_function, create_generator_table_scan},
+    {900003, "registry_test", "registry_test(a, b, ...)", "variadic", 2, -1,
+      nullptr, 0, bind_fixed_table_function, create_generator_table_scan},
+    {900004, "registry_test", "registry_test(a, b, c)", "ambiguous at three", 3, 3,
+      nullptr, 0, bind_fixed_table_function, create_generator_table_scan}
+  };
+  ASSERT_EQ(OB_SUCCESS, TableFunctionRegistry::register_functions(definitions, 4));
+  EXPECT_EQ(OB_SUCCESS, TableFunctionRegistry::register_functions(definitions, 4));
+  ObSEArray<const TableFunctionDescriptor *, 4> overloads;
+  ASSERT_EQ(OB_SUCCESS, TableFunctionRegistry::get_overloads(ObString("REGISTRY_TEST"), overloads));
+  ASSERT_EQ(4, overloads.count());
+  const TableFunctionDescriptor *matched = nullptr;
+  ASSERT_EQ(OB_SUCCESS, TableFunctionRegistry::match(ObString("registry_test"), 0, matched));
+  EXPECT_EQ(&definitions[0], matched);
+  ASSERT_EQ(OB_SUCCESS, TableFunctionRegistry::match(ObString("registry_test"), 1, matched));
+  EXPECT_EQ(&definitions[1], matched);
+  ASSERT_EQ(OB_SUCCESS, TableFunctionRegistry::match(ObString("registry_test"), 20, matched));
+  EXPECT_EQ(&definitions[2], matched);
+  EXPECT_EQ(OB_ERR_FUNC_DUP, TableFunctionRegistry::match(ObString("registry_test"), 3, matched));
+  EXPECT_EQ(nullptr, matched);
+  EXPECT_EQ(OB_ERR_PARAM_SIZE, TableFunctionRegistry::match(ObString("generator"), 2, matched));
+  EXPECT_EQ(OB_ERR_FUNCTION_UNKNOWN, TableFunctionRegistry::match(ObString("unregistered"), 0, matched));
+  ObSEArray<const TableFunctionDescriptor *, 16> all;
+  ASSERT_EQ(OB_SUCCESS, TableFunctionRegistry::get_all(all));
+  EXPECT_EQ(8, all.count());
+}
+
 class TableFunctionScanTest : public ::testing::Test
 {
 protected:

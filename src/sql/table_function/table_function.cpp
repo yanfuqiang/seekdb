@@ -69,12 +69,21 @@ int TableFunctionRegistry::register_functions(const TableFunctionDescriptor *def
   }
   for (int64_t i = 0; OB_SUCC(ret) && i < count; ++i) {
     const TableFunctionDescriptor &entry = definitions[i];
-    if (entry.name_ == nullptr || entry.bind_ == nullptr || entry.signature_ == nullptr ||
-        entry.description_ == nullptr || find(entry.id_) != nullptr ||
-        find(ObString::make_string(entry.name_)) != nullptr) { ret = OB_INVALID_ARGUMENT; }
+    if (entry.name_ == nullptr || entry.name_[0] == 0 || entry.bind_ == nullptr ||
+        entry.signature_ == nullptr || entry.description_ == nullptr ||
+        entry.min_arguments_ < 0 || entry.max_arguments_ < -1 ||
+        (entry.max_arguments_ >= 0 && entry.max_arguments_ < entry.min_arguments_) ||
+        entry.column_count_ < 0 || find(entry.id_) != nullptr) { ret = OB_INVALID_ARGUMENT; }
+    for (const auto &builtin : BUILTINS) {
+      if (OB_SUCC(ret) && ObCharset::case_insensitive_equal(
+          ObString::make_string(entry.name_), ObString::make_string(builtin.name_)) &&
+          STRCMP(entry.signature_, builtin.signature_) == 0) { ret = OB_INVALID_ARGUMENT; }
+    }
     for (int64_t j = 0; OB_SUCC(ret) && j < i; ++j) {
-      if (entry.id_ == definitions[j].id_ || ObCharset::case_insensitive_equal(
-          ObString::make_string(entry.name_), ObString::make_string(definitions[j].name_))) {
+      if (entry.id_ == definitions[j].id_ ||
+          (ObCharset::case_insensitive_equal(ObString::make_string(entry.name_),
+           ObString::make_string(definitions[j].name_)) &&
+           STRCMP(entry.signature_, definitions[j].signature_) == 0)) {
         ret = OB_INVALID_ARGUMENT;
       }
     }
@@ -94,23 +103,53 @@ int TableFunctionRegistry::register_functions(const TableFunctionDescriptor *def
   return ret;
 }
 
-const TableFunctionDescriptor *TableFunctionRegistry::find(const ObString &name)
+int TableFunctionRegistry::get_overloads(const ObString &name,
+    ObIArray<const TableFunctionDescriptor *> &definitions)
 {
-  const TableFunctionDescriptor *result = nullptr;
+  int ret = OB_SUCCESS;
   for (const auto &entry : BUILTINS) {
-    if (ObCharset::case_insensitive_equal(name, ObString::make_string(entry.name_))) {
-      result = &entry;
-      break;
+    if (OB_SUCC(ret) && ObCharset::case_insensitive_equal(name, ObString::make_string(entry.name_))) {
+      OZ (definitions.push_back(&entry));
     }
   }
   const int64_t count = system_definition_count;
   const TableFunctionDescriptor *system = system_definitions;
-  for (int64_t i = 0; result == nullptr && i < count; ++i) {
+  for (int64_t i = 0; OB_SUCC(ret) && i < count; ++i) {
     if (ObCharset::case_insensitive_equal(name, ObString::make_string(system[i].name_))) {
-      result = &system[i];
+      OZ (definitions.push_back(system + i));
     }
   }
-  return result;
+  return ret;
+}
+
+int TableFunctionRegistry::match(const ObString &name, int64_t argument_count,
+    const TableFunctionDescriptor *&definition)
+{
+  int ret = OB_SUCCESS;
+  definition = nullptr;
+  ObSEArray<const TableFunctionDescriptor *, 4> candidates;
+  OZ (get_overloads(name, candidates));
+  if (OB_SUCC(ret) && candidates.empty()) {
+    ret = OB_ERR_FUNCTION_UNKNOWN;
+    LOG_USER_ERROR(OB_ERR_FUNCTION_UNKNOWN, "TABLE FUNCTION", name.length(), name.ptr());
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < candidates.count(); ++i) {
+    const TableFunctionDescriptor &candidate = *candidates.at(i);
+    if (argument_count >= candidate.min_arguments_ &&
+        (candidate.max_arguments_ == -1 || argument_count <= candidate.max_arguments_)) {
+      if (definition == nullptr) { definition = &candidate; }
+      else {
+        ret = OB_ERR_FUNC_DUP;
+        definition = nullptr;
+        LOG_USER_ERROR(OB_ERR_FUNC_DUP, name.length(), name.ptr());
+      }
+    }
+  }
+  if (OB_SUCC(ret) && definition == nullptr) {
+    ret = OB_ERR_PARAM_SIZE;
+    LOG_USER_ERROR(OB_ERR_PARAM_SIZE, name.length(), name.ptr());
+  }
+  return ret;
 }
 
 const TableFunctionDescriptor *TableFunctionRegistry::find(uint64_t id)
