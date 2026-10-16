@@ -10,10 +10,10 @@
 | --- | --- | --- | --- |
 | [TF-1](https://github.com/oceanbase/seekdb/issues/1519) | 共同注册、FROM 调用及专属语法适配、绑定列和别名、SHOW/DESCRIBE、查询展开及缓存接入 | 无 | 实现中 |
 | [TF-2](https://github.com/oceanbase/seekdb/issues/1520) | 统一扫描接入；SQL/PL UNNEST、多输入与记录映射；GENERATOR 执行时参数、关联重扫及资源生命周期 | TF-1 | 实现中（与 TF-1 同分支） |
-| [TF-3](https://github.com/oceanbase/seekdb/issues/1521) | 启用 VT 清单、轻量描述符生成、无自身表 schema 的扫描器和工厂适配 | 无 | 已集成，待完整切换后运行验收 |
-| [TF-4](https://github.com/oceanbase/seekdb/issues/1522) | 系统信息函数接入，视图/SHOW/内部查询切换，移除自身 schema 创建/名字映射/bootstrap 落盘 | TF-1、TF-2、TF-3 | 实现中；依赖的注册/扫描接口已集成 |
-| [TF-5](https://github.com/oceanbase/seekdb/issues/1523) | 通用结果输出层的 PL 复合值编码，统一文本/二进制及普通/打包输出 | 无 | 已集成，修复运行测试发现的问题 |
-| [TF-6](https://github.com/oceanbase/seekdb/issues/1524) | 全部功能验收、生产编译、针对性回归、新实例 schema/磁盘对比、PR 审查与问题修复 | TF-1、TF-2、TF-3、TF-4、TF-5 | 已取得基线；分阶段验证中，完整验收待全部实现 |
+| [TF-3](https://github.com/oceanbase/seekdb/issues/1521) | 启用 VT 清单、轻量描述符生成、无自身表 schema 的扫描器和工厂适配 | 无 | 已集成；143 项列信息与有限扫描对比通过 |
+| [TF-4](https://github.com/oceanbase/seekdb/issues/1522) | 系统信息函数接入，视图/SHOW/内部查询切换，移除自身 schema 创建/名字映射/bootstrap 落盘 | TF-1、TF-2、TF-3 | 已集成；新实例元数据为 0，视图与权限回归中 |
+| [TF-5](https://github.com/oceanbase/seekdb/issues/1523) | 通用结果输出层的 PL 复合值编码，统一文本/二进制及普通/打包输出 | 无 | 已集成；9 项编码单测通过，协议路径验证中 |
+| [TF-6](https://github.com/oceanbase/seekdb/issues/1524) | 全部功能验收、生产编译、针对性回归、新实例 schema/磁盘对比、PR 审查与问题修复 | TF-1、TF-2、TF-3、TF-4、TF-5 | 全量构建、新实例和部分回归通过；最终审查未完成 |
 
 ```mermaid
 flowchart LR
@@ -54,3 +54,5 @@ flowchart LR
 按清单的 143 个旧 ID 实测：`__all_table` 143 行、`__all_column` 1664 行、`__all_table_history` 143 行、`__all_column_history` 1664 行、`__all_ddl_operation` 143 行，共 3757 行；143 个旧名称全部可绑定。139 个系统视图仍存在，逐个 `LIMIT 1` 查询有 138 个成功；`V$OB_PX_TARGET_MONITOR` 在未修改的基线即报 4016，需与迁移引入的问题区分。
 
 证据位于共享笔记目录的 `baseline-instance.json`、`baseline-view-execution.json`、`baseline-build-offline.log`；`capture_instance.py` 记录相同口径的元数据、运行时旧名称、schema 分配器及实际文件占用。文件预分配、日志和真实系统存储必须与删除的 VT 元数据分开解释，不能把文件尺寸直接当作 VT 数据量。
+
+实施后的实测记录见[验证记录](./table-functions-validation.md)。该记录区分已经执行的检查、基线已有失败和剩余验收，不以编译成功代替完整交付。
