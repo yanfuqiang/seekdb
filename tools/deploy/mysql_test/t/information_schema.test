@@ -24,7 +24,6 @@ drop table if exists oceanbase.t1, oceanbase.t2, oceanbase.t3;
 --enable_query_log
 desc information_schema.columns;
 desc information_schema.tables;
-desc information_schema.session_variables;
 desc information_schema.table_constraints;
 desc information_schema.character_sets;
 desc information_schema.global_variables;
@@ -39,7 +38,7 @@ desc information_schema.files;
 select * from information_schema.tables where table_schema in ('oceanbase', 'mysql', 'information_schema') order by TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME;
 --echo test
 #--sorted_result
-#select * from information_schema.session_variables where variable_name != 'version_comment' and variable_name != 'version' order by VARIABLE_NAME;
+#select * from session_variables() where variable_name != 'version_comment' and variable_name != 'version' order by VARIABLE_NAME;
 #--sorted_result
 #select * from information_schema.global_variables where variable_name != 'version_comment' and variable_name != 'version' order by VARIABLE_NAME;
 --sorted_result

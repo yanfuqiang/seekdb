@@ -55,13 +55,6 @@ desc information_schema.tables;
 | TABLE_COMMENT   | text                | NO   |     |         |       |
 | ORGANIZATION    | varchar(12)         | NO   |     |         |       |
 +-----------------+---------------------+------+-----+---------+-------+
-desc information_schema.session_variables;
-+----------------+---------------+------+-----+---------+-------+
-| Field          | Type          | Null | Key | Default | Extra |
-+----------------+---------------+------+-----+---------+-------+
-| VARIABLE_NAME  | varchar(128)  | NO   |     |         |       |
-| VARIABLE_VALUE | varchar(1024) | YES  |     | NULL    |       |
-+----------------+---------------+------+-----+---------+-------+
 desc information_schema.table_constraints;
 +--------------------+--------------+------+-----+---------+-------+
 | Field              | Type         | Null | Key | Default | Extra |
