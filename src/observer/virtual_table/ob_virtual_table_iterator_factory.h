@@ -52,18 +52,17 @@ public:
       addr_(addr)
   {}
   virtual ~ObVTIterCreator() {}
-  int get_latest_expected_schema(const uint64_t table_id,
-                                 const int64_t table_version,
-                                 share::schema::ObSchemaGetterGuard &schema_guard,
-                                 const share::schema::ObTableSchema *&t_schema);
   virtual int create_vt_iter(common::ObVTableScanParam &params,
                              common::ObVirtualTableIterator *&vt_iter);
   virtual int check_can_create_iter(common::ObVTableScanParam &params);
+  int create_function_iter(const sql::TableFunctionDescriptor &definition,
+                           common::ObIAllocator &allocator,
+                           sql::ObSQLSessionInfo *session,
+                           share::schema::ObSchemaGetterGuard &schema_guard,
+                           const common::ObIArray<common::ObNewRange> &key_ranges,
+                           const common::ObQueryFlag &scan_flag,
+                           common::ObVirtualTableIterator *&vt_iter);
   rootserver::ObLocalManagementService &get_local_management_service() { return local_management_service_; }
-
-public:
-  int check_is_index(const share::schema::ObTableSchema &table,
-      const char *index_name, bool &is_index) const;
 
 private:
   rootserver::ObLocalManagementService &local_management_service_;
