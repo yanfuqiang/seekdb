@@ -111,6 +111,11 @@ SELECT * FROM JSON_TABLE('[{"x":{}}]', '$[*]' COLUMNS (x INT PATH '$.x' ERROR ON
 SELECT * FROM JSON_TABLE('not json', '$[*]' COLUMNS (x INT PATH '$')) AS j;
 SELECT u.id, j.x FROM tf_inputs AS u CROSS JOIN JSON_TABLE(
   CONCAT('[', u.id, ',', u.n, ']'), '$[*]' COLUMNS (x INT PATH '$')) AS j ORDER BY u.id, j.x;
+SET @tf_json_calls = 0;
+SELECT u.id, j.x FROM (SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3) AS u
+CROSS JOIN JSON_TABLE(CONCAT('[', (@tf_json_calls := @tf_json_calls + 1 + u.id * 0), ']'),
+  '$[*]' COLUMNS (x INT PATH '$')) AS j ORDER BY u.id;
+SELECT @tf_json_calls AS document_evaluations;
 --error 1060
 SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (a INT PATH '$', b INT PATH '$')) AS j(x, X);
 --error 1582

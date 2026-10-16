@@ -113,7 +113,19 @@ public:
   }
   int get_next_row(ObNewRow *&row) override
   {
-    int ret = evaluator_->inner_get_next_row();
+    int ret = OB_SUCCESS;
+    // The common scan owns argument evaluation, including correlated rescans.
+    // Its per-row flag reset must not make the JSON evaluator execute the
+    // document expression again. Feed the invocation's saved values back into
+    // the evaluator's expression slots, including its default-value slots.
+    CK (context_.arguments_.count() == context_.argument_exprs_.count());
+    for (int64_t i = 0; OB_SUCC(ret) && i < context_.argument_exprs_.count(); ++i) {
+      ObExpr *expression = context_.argument_exprs_.at(i);
+      ObDatum &datum = expression->locate_datum_for_write(eval_ctx_);
+      OZ (datum.from_obj(context_.arguments_.at(i), expression->obj_datum_map_));
+      if (OB_SUCC(ret)) { expression->set_evaluated_projected(eval_ctx_); }
+    }
+    OZ (evaluator_->inner_get_next_row());
     for (int64_t i = 0; OB_SUCC(ret) && i < context_.column_exprs_.count(); ++i) {
       ObExpr *expression = context_.column_exprs_.at(i);
       const ObDatum &value = expression->locate_expr_datum(eval_ctx_);
