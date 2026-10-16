@@ -140,6 +140,7 @@ public:
             if (OB_SUCC(ret)) {
               values_.at(offset).set_varchar(bytes);
               values_.at(offset).set_type(ObCollectionSQLType);
+              values_.at(offset).set_has_lob_header();
             }
           } else { OZ (input.array_->elem_at(position, values_.at(offset))); }
         }

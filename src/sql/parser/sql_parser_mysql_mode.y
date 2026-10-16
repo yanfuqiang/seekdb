@@ -384,7 +384,7 @@ END_P SET_VAR DELIMITER
 %type <node> date_unit date_params timestamp_params
 %type <node> drop_table_stmt table_list drop_view_stmt table_or_tables
 %type <node> explain_stmt explainable_stmt format_name kill_stmt create_outline_stmt alter_outline_stmt drop_outline_stmt opt_outline_target
-%type <node> expr_list expr expr_const conf_const simple_expr simple_expr_list expr_or_default bit_expr bool_pri predicate explain_or_desc pl_expr_stmt
+%type <node> expr_list expr expr_const conf_const simple_expr expr_or_default bit_expr bool_pri predicate explain_or_desc pl_expr_stmt
 %type <node> column_ref multi_delete_table
 %type <node> case_expr func_expr in_expr sub_query_flag search_expr
 %type <node> case_arg when_clause_list when_clause case_default
@@ -1629,17 +1629,6 @@ simple_expr collation %prec NEG
 | USER_VARIABLE
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_OP_GET_USER_VAR, 1, $1);
-}
-;
-
-simple_expr_list:
-simple_expr
-{
-  malloc_list_node($$, result->malloc_pool_, T_EXPR_LIST, 2, 1, $1);
-}
-| simple_expr_list ',' simple_expr
-{
-  push_back_list(result->malloc_pool_, result, $$, $1, $3);
 }
 ;
 
@@ -17428,7 +17417,7 @@ table_function_column_aliases:
 
 table_function_arguments:
 /* empty */ { $$ = NULL; }
-| simple_expr_list { $$ = $1; }
+| expr_list { $$ = $1; }
 ;
 
 table_function_expr:

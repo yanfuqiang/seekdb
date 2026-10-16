@@ -3752,7 +3752,8 @@ int ObDMLResolver::bind_hybrid_table_function(const TableFunctionCall &call, Tab
         for (int64_t j = 0; OB_SUCC(ret) && j < pending.count(); ++j) {
           const ObRawExpr &part = *pending.at(j);
           if (!part.is_static_const_expr() || !part.is_deterministic() ||
-              part.get_expr_type() == T_QUESTIONMARK || part.get_expr_type() == T_FUN_UDF ||
+              (part.get_expr_type() == T_QUESTIONMARK && params_.is_prepare_protocol_) ||
+              part.get_expr_type() == T_FUN_UDF ||
               part.get_expr_type() == T_OP_GET_USER_VAR || part.has_flag(CNT_STATE_FUNC) ||
               part.has_flag(CNT_RAND_FUNC) || part.has_flag(CNT_CUR_TIME) ||
               part.has_flag(CNT_VOLATILE_CONST) || part.has_flag(CNT_SUB_QUERY)) {
@@ -3764,7 +3765,10 @@ int ObDMLResolver::bind_hybrid_table_function(const TableFunctionCall &call, Tab
           }
         }
         const ParamStore no_parameters;
-        OZ (ObSQLUtils::calc_const_expr(session_info_, *expression, value, *allocator_, no_parameters,
+        // Normal SQL literals can already be parameterized by the fast parser.
+        // These values belong to this bind, unlike EXECUTE's structural inputs.
+        const ParamStore &parameters = params_.param_list_ == nullptr ? no_parameters : *params_.param_list_;
+        OZ (ObSQLUtils::calc_const_expr(session_info_, *expression, value, *allocator_, parameters,
             session_info_->get_cur_exec_ctx()));
       }
       if (OB_SUCC(ret) && !value.is_varchar()) {
