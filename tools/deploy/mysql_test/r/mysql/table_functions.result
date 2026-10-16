@@ -245,6 +245,31 @@ id	x
 SELECT @tf_json_calls AS document_evaluations;
 document_evaluations
 3
+SET @tf_json_calls = 0;
+SELECT u.id, j.x FROM (SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3) AS u
+CROSS JOIN JSON_TABLE(JSON_ARRAY((@tf_json_calls := @tf_json_calls + 1) + u.id * 0, 99),
+'$[*]' COLUMNS (x INT PATH '$')) AS j ORDER BY u.id, j.x;
+id	x
+1	1
+1	99
+2	2
+2	99
+3	3
+3	99
+SELECT @tf_json_calls AS document_evaluations;
+document_evaluations
+3
+SET @tf_json_calls = 0;
+SELECT u.id, j.x FROM (SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3) AS u
+LEFT JOIN JSON_TABLE(JSON_REMOVE(JSON_ARRAY((@tf_json_calls := @tf_json_calls + 1) + u.id * 0),
+IF(u.id = 2, '$[0]', '$[99]')), '$[*]' COLUMNS (x INT PATH '$')) AS j ON TRUE ORDER BY u.id, j.x;
+id	x
+1	1
+2	NULL
+3	3
+SELECT @tf_json_calls AS document_evaluations;
+document_evaluations
+3
 SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (a INT PATH '$', b INT PATH '$')) AS j(x, X);
 ERROR 42S21: Duplicate column name 'X'
 SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (a INT PATH '$')) AS j(x, y);
