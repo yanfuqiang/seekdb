@@ -539,6 +539,23 @@ protected:
   int resolve_normal_column_attribute_check_cons(ObColumnSchemaV2 &column,
                                                  ParseNode *attrs_node,
                                                  ObCreateTableStmt *create_table_stmt);
+  int resolve_ai_column_attribute(share::schema::ObColumnSchemaV2 &column,
+                                  ParseNode *attr_node,
+                                  ObColumnResolveStat &resolve_stat);
+  int resolve_ai_column_options(ParseNode *options_node, share::schema::ObColumnSchemaV2 &column);
+  int check_ai_embed_dimension(const share::schema::ObColumnSchemaV2 &column, ParseNode *expr_node);
+  int collect_ai_expr_column_names(ParseNode *node,
+                                   common::ObIArray<common::ObString> &column_names);
+  int set_ai_depend_columns(share::schema::ObColumnSchemaV2 &column,
+                            const common::ObIArray<common::ObString> &dep_columns);
+  int build_ai_normalized_expr(const share::schema::ObColumnSchemaV2 &column,
+                               const common::ObString &raw_expr,
+                               const bool is_embed,
+                               common::ObString &normalized_expr);
+  static int build_ai_hidden_column(const share::schema::ObColumnSchemaV2 &ai_column,
+                                    const int64_t kind,
+                                    share::schema::ObColumnSchemaV2 &hidden_column);
+  int check_ai_column_dependencies(const share::schema::ObTableSchema &table_schema);
   int resolve_normal_column_attribute_foreign_key(ObColumnSchemaV2 &column,
                                                   ParseNode *attrs_node,
                                                   ObCreateTableStmt *create_table_stmt);

@@ -91,6 +91,12 @@ int ObColumnSchemaV2::assign(const ObColumnSchemaV2 &src_schema)
 
     if (OB_SUCC(ret)) {
       if (OB_FAIL(local_session_vars_.deep_copy(src_schema.local_session_vars_))) {
+      } else {
+        ai_owner_column_id_ = src_schema.ai_owner_column_id_;
+        ai_max_retries_ = src_schema.ai_max_retries_;
+        if (OB_FAIL(deep_copy_str(src_schema.ai_normalized_expr_, ai_normalized_expr_))) {
+        } else if (OB_FAIL(deep_copy_str(src_schema.ai_depend_columns_, ai_depend_columns_))) {
+        }
       }
     }
 
@@ -128,6 +134,8 @@ int64_t ObColumnSchemaV2::get_convert_size() const
     convert_size += extended_type_info_.at(i).length() + 1;
   }
   convert_size += local_session_vars_.get_deep_copy_size();
+  convert_size += ai_normalized_expr_.length() + 1;
+  convert_size += ai_depend_columns_.length() + 1;
   return convert_size;
 }
 
@@ -188,6 +196,10 @@ void ObColumnSchemaV2::reset()
   skip_index_attr_.reset();
   lob_chunk_size_ = OB_DEFAULT_LOB_CHUNK_SIZE;
   local_session_vars_.reset();
+  ai_owner_column_id_ = 0;
+  ai_max_retries_ = 0;
+  ai_normalized_expr_.reset();
+  ai_depend_columns_.reset();
   ObSchema::reset();
 }
 
@@ -235,7 +247,11 @@ OB_DEF_SERIALIZE(ObColumnSchemaV2)
                 sub_type_,
                 skip_index_attr_,
                 lob_chunk_size_,
-                local_session_vars_);
+                local_session_vars_,
+                ai_owner_column_id_,
+                ai_max_retries_,
+                ai_normalized_expr_,
+                ai_depend_columns_);
   }
 
   return ret;
@@ -248,6 +264,8 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
   ObObj cur_default_value;
   ObString column_name;
   ObString comment;
+  ObString ai_normalized_expr;
+  ObString ai_depend_columns;
   bool has_column_ref = false;
 
   LST_DO_CODE(OB_UNIS_DECODE,
@@ -295,7 +313,16 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
                 sub_type_,
                 skip_index_attr_,
                 lob_chunk_size_,
-                local_session_vars_);
+                local_session_vars_,
+                ai_owner_column_id_,
+                ai_max_retries_,
+                ai_normalized_expr,
+                ai_depend_columns);
+    if (OB_SUCC(ret)) {
+      if (OB_FAIL(deep_copy_str(ai_normalized_expr, ai_normalized_expr_))) {
+      } else if (OB_FAIL(deep_copy_str(ai_depend_columns, ai_depend_columns_))) {
+      }
+    }
   }
   return ret;
 }
@@ -340,7 +367,11 @@ OB_DEF_SERIALIZE_SIZE(ObColumnSchemaV2)
               sub_type_,
               skip_index_attr_,
               lob_chunk_size_,
-              local_session_vars_);
+              local_session_vars_,
+              ai_owner_column_id_,
+              ai_max_retries_,
+              ai_normalized_expr_,
+              ai_depend_columns_);
   return len;
 }
 
@@ -409,7 +440,11 @@ int64_t ObColumnSchemaV2::to_string(char *buf, const int64_t buf_len) const
     K_(skip_index_attr),
     K_(lob_chunk_size),
     KPC_(column_ref_idxs),
-    K(local_session_vars_));
+    K(local_session_vars_),
+    K_(ai_owner_column_id),
+    K_(ai_max_retries),
+    K_(ai_normalized_expr),
+    K_(ai_depend_columns));
   J_OBJ_END();
   return pos;
 }

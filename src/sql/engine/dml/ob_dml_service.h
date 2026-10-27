@@ -22,6 +22,7 @@
 #include "data_plane/ob_i_write_context_service.h"
 #include "sql/das/ob_das_context.h"
 #include "ob_table_modify_op.h"
+#include "common/mysqlclient/ob_isql_client.h"
 
 namespace oceanbase
 {
@@ -254,6 +255,8 @@ public:
   static int handle_after_processing_single_row(ObDMLModifyRowsList *dml_modify_rows);
   static int handle_after_processing_single_row(ObDMLModifyRowNode &modify_row);
   static int handle_after_processing_multi_row(ObDMLModifyRowsList *dml_modify_rows, ObTableModifyOp *op);
+  static int64_t next_ai_column_request_id();
+  static int run_ai_column_worker(common::ObISQLClient &sql_proxy);
   // static int handle_after_processing_batch(const ObTableModifyOp *op,
   //                                           ObDMLModifyRowsList *dml_modify_rows);
   static int handle_after_row_processing(ObTableModifyOp *op, ObDMLModifyRowsList *dml_modify_rows);

@@ -39,6 +39,8 @@
 #define FETCH_ALL_COLUMN_HISTORY_SQL            COMMON_SCHEMA_SQL
 #define FETCH_ALL_CONSTRAINT_SQL                COMMON_SCHEMA_SQL
 #define FETCH_ALL_CONSTRAINT_HISTORY_SQL        COMMON_SCHEMA_SQL
+#define FETCH_ALL_AI_COLUMN_SQL                 COMMON_SCHEMA_SQL
+#define FETCH_ALL_AI_COLUMN_HISTORY_SQL         COMMON_SCHEMA_SQL
 #define FETCH_ALL_DATABASE_HISTORY_SQL          COMMON_SCHEMA_SQL
 #define FETCH_ALL_USER_HISTORY_SQL              COMMON_SCHEMA_SQL
 #define FETCH_ALL_DB_PRIV_HISTORY_SQL           COMMON_SCHEMA_SQL
@@ -4087,6 +4089,10 @@ int ObSchemaServiceSQLImpl::get_not_core_table_schema(
                                              sql_client, table_schema))) {
   }
   if (OB_SUCC(ret) && !is_schema_fetch_dependency
+      && OB_FAIL(fetch_ai_column_info(schema_status, table_id, schema_version,
+                                      sql_client, table_schema))) {
+  }
+  if (OB_SUCC(ret) && !is_schema_fetch_dependency
       && OB_FAIL(fetch_foreign_key_info(schema_status, table_id, schema_version,
                                         sql_client, *table_schema))) {
   }
@@ -4243,6 +4249,104 @@ int ObSchemaServiceSQLImpl::fetch_constraint_column_info(const ObRefreshSchemaSt
     }
   }
 
+  return ret;
+}
+
+int ObSchemaServiceSQLImpl::fetch_ai_column_info(const ObRefreshSchemaStatus &schema_status,
+                                                 const uint64_t table_id,
+                                                 const int64_t schema_version,
+                                                 common::ObISQLClient &sql_client,
+                                                 ObTableSchema *&table_schema)
+{
+  int ret = OB_SUCCESS;
+  bool has_ai_column = false;
+  if (OB_ISNULL(table_schema)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    for (ObTableSchema::const_column_iterator iter = table_schema->column_begin();
+         OB_SUCC(ret) && !has_ai_column && iter != table_schema->column_end(); ++iter) {
+      if (OB_ISNULL(*iter)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if ((*iter)->is_ai_column()) {
+        has_ai_column = true;
+      }
+    }
+  }
+  if (OB_SUCC(ret) && has_ai_column) {
+    SMART_VAR(ObMySQLProxy::MySQLResult, res) {
+      ObMySQLResult *result = NULL;
+      ObSqlString sql;
+      const int64_t snapshot_timestamp = schema_status.snapshot_timestamp_;
+      DEFINE_SQL_CLIENT_RETRY_WEAK_WITH_SNAPSHOT(sql_client, snapshot_timestamp);
+      if (OB_FAIL(sql.append_fmt(FETCH_ALL_AI_COLUMN_HISTORY_SQL,
+                                 OB_ALL_AI_COLUMN_HISTORY_TNAME,
+                                 OB_INVALID_RUNTIME_ID))) {
+      } else if (OB_FAIL(sql.append_fmt(" AND table_id = %lu and schema_version <= %ld"
+                                        " ORDER BY column_id, schema_version desc",
+                                        table_id,
+                                        schema_version))) {
+      } else if (OB_FAIL(sql_client_retry_weak.read(res, sql.ptr()))) {
+      } else if (OB_ISNULL(result = res.get_result())) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        uint64_t prev_column_id = OB_INVALID_ID;
+        while (OB_SUCC(ret) && OB_SUCC(result->next())) {
+          bool is_deleted = false;
+          uint64_t column_id = OB_INVALID_ID;
+          uint64_t state_column_id = OB_INVALID_ID;
+          uint64_t request_column_id = OB_INVALID_ID;
+          uint64_t result_spec_column_id = OB_INVALID_ID;
+          int64_t max_retries = 0;
+          ObString normalized_expr;
+          ObString depend_columns;
+          if (OB_FAIL(result->get_int("is_deleted", is_deleted))) {
+          } else if (OB_FAIL(result->get_uint64("column_id", column_id))) {
+          } else if (prev_column_id == column_id) {
+            // only the newest version of each ai column is applied
+          } else if (is_deleted) {
+            prev_column_id = column_id;
+          } else if (OB_FAIL(result->get_uint64("state_column_id", state_column_id))) {
+          } else if (OB_FAIL(result->get_uint64("request_column_id", request_column_id))) {
+          } else if (OB_FAIL(result->get_uint64("result_spec_column_id", result_spec_column_id))) {
+          } else if (OB_FAIL(result->get_int("max_retries", max_retries))) {
+          } else if (OB_FAIL(result->get_varchar("normalized_expr", normalized_expr))) {
+          } else if (OB_FAIL(result->get_varchar("depend_columns", depend_columns))) {
+            if (OB_ERR_NULL_VALUE == ret) {
+              ret = OB_SUCCESS;
+              depend_columns.reset();
+            }
+          } else {
+            ObColumnSchemaV2 *ai_column = table_schema->get_column_schema(column_id);
+            ObColumnSchemaV2 *state_column = table_schema->get_column_schema(state_column_id);
+            ObColumnSchemaV2 *request_column = table_schema->get_column_schema(request_column_id);
+            ObColumnSchemaV2 *spec_column = table_schema->get_column_schema(result_spec_column_id);
+            if (OB_ISNULL(ai_column) || OB_ISNULL(state_column)
+                || OB_ISNULL(request_column) || OB_ISNULL(spec_column)) {
+              ret = OB_ERR_UNEXPECTED;
+              SHARE_SCHEMA_LOG(WARN, "ai column metadata mismatch", KR(ret),
+                               K(table_id), K(column_id), K(state_column_id),
+                               K(request_column_id), K(result_spec_column_id));
+            } else {
+              ai_column->set_ai_max_retries(max_retries);
+              if (OB_FAIL(ai_column->set_ai_normalized_expr(normalized_expr))) {
+              } else if (OB_FAIL(ai_column->set_ai_depend_columns(depend_columns))) {
+              } else {
+                state_column->set_ai_owner_column_id(column_id);
+                request_column->set_ai_owner_column_id(column_id);
+                spec_column->set_ai_owner_column_id(column_id);
+                prev_column_id = column_id;
+              }
+            }
+          }
+        }
+        if (ret != common::OB_ITER_END) {
+          SHARE_SCHEMA_LOG(WARN, "fail to get ai column info, iter quit", KR(ret), K(table_id));
+        } else {
+          ret = common::OB_SUCCESS;
+        }
+      }
+    }
+  }
   return ret;
 }
 

@@ -2281,6 +2281,10 @@ typedef enum ObItemType
   T_COPY_HEADER = 4933,
   T_COPY_NULLSTR = 4934,
   T_DESCRIBE_SELECT = 4935,
+  T_AI_COLUMN = 4936,
+  T_AI_COLUMN_PARAMS = 4937,
+  T_AI_COLUMN_PARAM = 4938,
+  T_RETRY_AI_COLUMN = 4939,
   T_MAX //Attention: add a new type before T_MAX
 } ObItemType;
 

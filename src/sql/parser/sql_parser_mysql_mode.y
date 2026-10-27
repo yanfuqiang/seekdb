@@ -333,7 +333,7 @@ END_P SET_VAR DELIMITER
         QUANTIFIER_TABLE QUARTER QUERY QUEUE_TIME QUICK
 
         RECOVER REDUNDANT REFRESH RELAY RELAYLOG RELAY_LOG_FILE RELAY_LOG_POS RELAY_THREAD RELOAD REMOVE
-        REPEATABLE RESET RESPECT RESTART RESTORE RESUME RETURNED_SQLSTATE RETURNS RETURNING REVERSE
+        REPEATABLE RESET RESPECT RESTART RESTORE RESUME RETRY RETURNED_SQLSTATE RETURNS RETURNING REVERSE
         REWRITE ROLLBACK ROLLUP ROUTINE ROW ROWID ROW_COUNT ROW_FORMAT ROWS RTREE
         RUN RECYCLEBIN REPLICATION ROTATE ROW_NUMBER RUDUNDANT RECURSIVE RANDOM REDO_TRANSPORT_OPTIONS
         RANK READ_ONLY RECOVERY REJECT ROLE
@@ -422,6 +422,7 @@ END_P SET_VAR DELIMITER
 %type <node> opt_equal_mark opt_default_mark read_only_or_write not not2
 %type <node> int_or_decimal
 %type <node> opt_column_attribute_list column_attribute column_attribute_list opt_column_default_value opt_column_default_value_list
+%type <node> opt_ai_column_with_options ai_column_param_list ai_column_param ai_column_param_value
 %type <node> show_stmt from_or_in columns_or_fields database_or_schema index_or_indexes_or_keys opt_from_or_in_database_clause opt_show_condition opt_desc_column_option opt_status opt_storage opt_show_engine check_table_options check_table_option
 %type <node> prepare_stmt stmt_name preparable_stmt
 %type <node> variable_set_stmt var_and_val_list var_and_val to_or_eq set_expr_or_default sys_var_and_val
@@ -6197,6 +6198,11 @@ not NULLX
 | lob_chunk_size
 {
   $$ = $1;
+}
+| AI COLUMN '(' expr ')' opt_ai_column_with_options
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN, 2, $4, $6);
+  dup_expr_string($4, result, @4.first_column, @4.last_column);
 }
 | COLUMN_FORMAT DEFAULT
 {
@@ -14823,6 +14829,15 @@ opt_set table_option_list_space_seperated
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_ALTER_COLUMN_OPTION, 1, $1);
 }
+| RETRY AI COLUMN column_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_RETRY_AI_COLUMN, 2, $4, NULL);
+}
+| RETRY AI COLUMN column_name WHERE expr
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_RETRY_AI_COLUMN, 2, $4, $6);
+  dup_expr_string($6, result, @6.first_column, @6.last_column);
+}
 | RENAME opt_to relation_factor
 {
   (void)($2);
@@ -16924,6 +16939,62 @@ INTNUM
 
 /*===========================================================
  *
+ *	ai column
+ *
+ *===========================================================*/
+
+opt_ai_column_with_options:
+/* EMPTY */
+{
+  $$ = NULL;
+}
+| WITH '(' ai_column_param_list ')'
+{
+  merge_nodes($$, result, T_AI_COLUMN_PARAMS, $3);
+  dup_expr_string($$, result, @3.first_column, @3.last_column);
+}
+;
+
+ai_column_param_list:
+ai_column_param
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, NULL);
+}
+| ai_column_param_list ',' ai_column_param
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
+}
+;
+
+ai_column_param:
+relation_name COMP_EQ ai_column_param_value
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN_PARAM, 2, $1, $3);
+}
+;
+
+ai_column_param_value:
+INTNUM
+{
+  $1->type_ = T_NUMBER;
+  $$ = $1;
+}
+| BOOL_VALUE
+{
+  $$ = $1;
+}
+| text_string
+{
+  $$ = $1;
+}
+| relation_name
+{
+  $$ = $1;
+}
+;
+
+/*===========================================================
+ *
  *	json query
  *
  *===========================================================*/
@@ -18060,6 +18131,7 @@ FUNCTIONS
 |       RESTART
 |       RESTORE
 |       RESUME
+|       RETRY
 |       RETURNED_SQLSTATE
 |       RETURNING
 |       RETURNS

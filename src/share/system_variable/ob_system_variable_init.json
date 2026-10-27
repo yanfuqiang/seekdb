@@ -10988,5 +10988,18 @@
     "info_cn": "开启后可以将本地文件当作表查询",
     "background_cn": "",
     "ref_url": ""
+  },
+  "ai_column_strict_read": {
+    "id": 10755,
+    "name": "ai_column_strict_read",
+    "default_value": "0",
+    "base_value": "0",
+    "data_type": "bool",
+    "info": "read AI columns strictly, report an error when referenced AI columns have unfinished rows",
+    "flags": "GLOBAL | SESSION | NEED_SERIALIZE",
+    "publish_version": "1.0.0.0",
+    "info_cn": "开启后若语句引用的 AI 列存在未就绪行则报错",
+    "background_cn": "",
+    "ref_url": ""
   }
 }

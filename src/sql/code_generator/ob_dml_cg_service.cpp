@@ -2161,6 +2161,22 @@ int ObDmlCgService::generate_dml_base_ctdef(ObLogDelUpd &op,
     if (OB_FAIL(convert_triggers(op, index_dml_info, dml_base_ctdef, dml_event))) {
     }
   }
+  // AI columns are maintained through nested SQL on the caller's session
+  if (OB_SUCC(ret) && index_dml_info.is_primary_index_) {
+    ObSchemaGetterGuard *schema_guard = cg_.opt_ctx_->get_schema_guard();
+    const ObTableSchema *table_schema = NULL;
+    if (OB_ISNULL(schema_guard)) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("schema guard is null", K(ret));
+    } else if (OB_FAIL(schema_guard->get_table_schema(index_dml_info.ref_table_id_, table_schema))) {
+      LOG_WARN("get table schema failed", K(ret), K(index_dml_info.ref_table_id_));
+    } else if (OB_ISNULL(table_schema)) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("table schema is null", K(ret), K(index_dml_info.ref_table_id_));
+    } else if (table_schema->has_ai_column()) {
+      cg_.phy_plan_->set_has_nested_sql(true);
+    }
+  }
   return ret;
 }
 

@@ -106,6 +106,18 @@ static const uint64_t OB_MIN_ID  = 0;//used for lower_bound
 #define RESERVED_COLUMN_FLAG_4 (INT64_C(1) << 4)
 #define RESERVED_COLUMN_FLAG_5 (INT64_C(1) << 5)
 #define INVISIBLE_COLUMN_FLAG (INT64_C(1) << 6)
+#define AI_COLUMN_FLAG (INT64_C(1) << 7)
+// hidden system columns auto created for an AI column, owned by the AI column
+#define AI_COLUMN_STATE_COLUMN_FLAG (INT64_C(1) << 9)
+#define AI_COLUMN_REQUEST_COLUMN_FLAG (INT64_C(1) << 10)
+#define AI_COLUMN_SPEC_COLUMN_FLAG (INT64_C(1) << 11)
+#define AI_COLUMN_STATE_COLUMN_PREFIX "__ai_state_"
+#define AI_COLUMN_REQUEST_COLUMN_PREFIX "__ai_req_"
+#define AI_COLUMN_SPEC_COLUMN_PREFIX "__ai_spec_"
+// state of an AI column value stored in the hidden state column
+static const int64_t AI_COLUMN_STATE_PENDING = 1;
+static const int64_t AI_COLUMN_STATE_READY = 2;
+static const int64_t AI_COLUMN_STATE_FAILED = 3;
 // The logic of the new table without a primary key changes the column (partition key) to the primary key
 #define HEAP_ALTER_ROWKEY_FLAG (INT64_C(1) << 8)
 #define HEAP_TABLE_SORT_ROWKEY_FLAG (INT64_C(1) << 12) // 1:sortkey in new no pk table

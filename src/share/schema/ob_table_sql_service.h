@@ -125,6 +125,13 @@ public:
                            const ObTableSchema &new_table_schema,
                            const ObColumnSchemaV2 &column_schema,
                            const bool record_ddl_operation);
+  //ai column metadata in __all_ai_column
+  int add_single_ai_column(common::ObISQLClient &sql_client,
+                           const ObTableSchema &table_schema,
+                           const ObColumnSchemaV2 &ai_column);
+  int delete_ai_columns(common::ObISQLClient &sql_client,
+                        const ObTableSchema &table_schema,
+                        const int64_t new_schema_version);
   //alter table add constraint
   int insert_single_constraint(common::ObISQLClient &sql_client,
                            const ObTableSchema &new_table_schema,
@@ -362,6 +369,13 @@ private:
   int add_columns_dml(const ObTableSchema &table,
       share::ObDMLSqlSplicer &all_column_dml,
       int64_t &column_count);
+  int get_ai_hidden_column_ids(const ObTableSchema &table,
+      const ObColumnSchemaV2 &ai_column,
+      uint64_t &state_column_id,
+      uint64_t &request_column_id,
+      uint64_t &result_spec_column_id);
+  int add_ai_columns(common::ObISQLClient &sql_client,
+      const ObIArray<ObTableSchema> &tables);
   int batch_add_columns_for_create_table(common::ObISQLClient &sql_client,
       const ObIArray<ObTableSchema> &table);
   int add_columns_for_core(common::ObISQLClient &sql_client, const ObTableSchema &table);

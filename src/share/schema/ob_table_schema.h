@@ -1479,6 +1479,7 @@ public:
   uint64_t get_aux_lob_meta_tid() const { return aux_lob_meta_tid_; }
   uint64_t get_aux_lob_piece_tid() const { return aux_lob_piece_tid_; }
   bool has_lob_column(const bool ignore_unused_column) const;
+  bool has_ai_column() const;
   int64_t get_lob_columns_count() const;
   bool has_lob_aux_table() const { return (aux_lob_meta_tid_ != OB_INVALID_ID && aux_lob_piece_tid_ != OB_INVALID_ID); }
   // ObColumnIterByPrevNextID's column id is not in order, it means table has add column instant and return true

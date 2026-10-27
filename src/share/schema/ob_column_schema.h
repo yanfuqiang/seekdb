@@ -159,6 +159,12 @@ int assign(const ObColumnSchemaV2 &src_schema);
   int set_geo_type(const int32_t type_val);
   inline void set_skip_index_attr(const uint64_t attr_val) { skip_index_attr_.set_column_attr(attr_val); }
   inline void set_is_string_lob() { add_column_flag(STRING_LOB_COLUMN_FLAG); }
+  inline void set_ai_owner_column_id(const uint64_t id) { ai_owner_column_id_ = id; }
+  inline void set_ai_max_retries(const int64_t max_retries) { ai_max_retries_ = max_retries; }
+  inline int set_ai_normalized_expr(const common::ObString &expr)
+  { return deep_copy_str(expr, ai_normalized_expr_); }
+  inline int set_ai_depend_columns(const common::ObString &deps)
+  { return deep_copy_str(deps, ai_depend_columns_); }
   //get methods
   
   inline uint64_t get_table_id() const { return table_id_; }
@@ -293,6 +299,16 @@ int assign(const ObColumnSchemaV2 &src_schema);
   inline bool is_domain_index_column() const { return is_vec_index_column() || is_fulltext_column() || is_multivalue_generated_column() || is_multivalue_generated_array_column(); }
   inline bool has_generated_column_deps() const { return column_flags_ & GENERATED_DEPS_CASCADE_FLAG; }
   inline bool is_invisible_column() const { return column_flags_ & INVISIBLE_COLUMN_FLAG; }
+  inline bool is_ai_column() const { return column_flags_ & AI_COLUMN_FLAG; }
+  inline bool is_ai_state_column() const { return column_flags_ & AI_COLUMN_STATE_COLUMN_FLAG; }
+  inline bool is_ai_request_column() const { return column_flags_ & AI_COLUMN_REQUEST_COLUMN_FLAG; }
+  inline bool is_ai_spec_column() const { return column_flags_ & AI_COLUMN_SPEC_COLUMN_FLAG; }
+  inline bool is_ai_hidden_column() const
+  { return is_ai_state_column() || is_ai_request_column() || is_ai_spec_column(); }
+  inline uint64_t get_ai_owner_column_id() const { return ai_owner_column_id_; }
+  inline int64_t get_ai_max_retries() const { return ai_max_retries_; }
+  inline const common::ObString &get_ai_normalized_expr() const { return ai_normalized_expr_; }
+  inline const common::ObString &get_ai_depend_columns() const { return ai_depend_columns_; }
   inline bool has_column_flag(int64_t flag) const { return column_flags_ & flag; }
   inline int64_t get_column_flags() const { return column_flags_; }
   //these column flags must be stored in __all_column
@@ -398,6 +414,10 @@ private:
   ObSkipIndexColumnAttr skip_index_attr_;
   int64_t lob_chunk_size_;
   share::ObLocalSessionVar local_session_vars_;
+  uint64_t ai_owner_column_id_; // for hidden ai columns: id of the ai column owning it
+  int64_t ai_max_retries_;
+  common::ObString ai_normalized_expr_;
+  common::ObString ai_depend_columns_; // column names referenced by ai_normalized_expr, joined by ','
 };
 
 inline int32_t ObColumnSchemaV2::get_data_length() const

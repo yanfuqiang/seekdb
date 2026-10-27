@@ -293,6 +293,19 @@ public:
     bool is_inited_;
   };
 
+  class ObAIColumnWorkerTask: public common::ObTimerTask
+  {
+  public:
+    ObAIColumnWorkerTask();
+    virtual ~ObAIColumnWorkerTask() {}
+    int init(ObServer *observer, common::ObTimer &timer);
+    virtual void runTimerTask() override;
+  private:
+    const static int64_t WORKER_INTERVAL = 100L * 1000L;//100ms
+    ObServer *obs_;
+    bool is_inited_;
+  };
+
   class ObCTASCleanUp
   {
   public:
@@ -386,6 +399,7 @@ private:
   int init_redef_heart_beat_task();
   int init_ddl_heart_beat_task_container();
   int init_refresh_cpu_frequency();
+  int init_ai_column_worker_task();
   int set_running_mode();
   int initialize_server_runtime();
   int wait_for_server_runtime();
@@ -483,11 +497,13 @@ private:
   common::ObTimer server_gtimer_;
   common::ObTimer sql_mem_timer_;
   common::ObTimer ctas_clean_up_timer_;
+  common::ObTimer ai_column_worker_timer_;
   ObServerDutyTask duty_task_;
   ObSqlMemoryTimerTask sql_mem_task_;
   ObCTASCleanUpTask ctas_clean_up_task_;     // repeat & no retry
   ObRedefTableHeartBeatTask redef_table_heart_beat_task_;
   ObRefreshCpuFreqTimeTask refresh_cpu_frequency_task_;
+  ObAIColumnWorkerTask ai_column_worker_task_;
   blocksstable::ObStorageEnv storage_env_;
   share::ObSchemaStatusProxy schema_status_proxy_;
 

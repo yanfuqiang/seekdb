@@ -58,6 +58,7 @@ int ObServer::get_lower_bound_freeze_info(const int64_t snapshot_version, share:
 #include "logservice/ob_log_allocator_mgr.h"
 #include "observer/omt/ob_server_runtime.h"
 #include "sql/engine/px/p2p_datahub/ob_p2p_dh_mgr.h"
+#include "sql/engine/dml/ob_dml_service.h"
 #include "sql/ob_sql_init.h"
 #include "sql/ob_sql_task.h"
 #include "sql/engine/cmd/ob_load_data_utils.h"
@@ -626,10 +627,12 @@ ObServer::ObServer()
     server_gtimer_(),
     sql_mem_timer_(),
     ctas_clean_up_timer_(),
+    ai_column_worker_timer_(),
     duty_task_(),
     sql_mem_task_(),
     ctas_clean_up_task_(),
     refresh_cpu_frequency_task_(),
+    ai_column_worker_task_(),
     schema_status_proxy_(sql_proxy_),
     is_log_dir_empty_(false),
     conn_res_mgr_(),
@@ -850,6 +853,8 @@ int ObServer::init(const ObServerOptions &opts, const ObPLogWriterCfg &log_cfg)
       LOG_ERROR("init redef heart beat task failed", KR(ret));
     } else if (OB_FAIL(init_refresh_cpu_frequency())) {
       LOG_ERROR("init refresh cpu frequency failed", KR(ret));
+    } else if (OB_FAIL(init_ai_column_worker_task())) {
+      LOG_ERROR("init ai column worker task failed", KR(ret));
     } else if (OB_FAIL(ObOptStatManager::get_instance().init(&sql_proxy_))) {
       LOG_ERROR("init opt stat manager failed", KR(ret));
     } else if (OB_FAIL(ObSysTaskStatMgr::get_instance().set_self_addr(self_addr_))) {
@@ -983,6 +988,10 @@ void ObServer::destroy()
     FLOG_INFO("begin to destroy ctas clean up timer");
     ctas_clean_up_timer_.destroy();
     FLOG_INFO("ctas clean up timer destroyed");
+
+    FLOG_INFO("begin to destroy ai column worker timer");
+    ai_column_worker_timer_.destroy();
+    FLOG_INFO("ai column worker timer destroyed");
 
     FLOG_INFO("begin to destroy local management service");
     local_management_service_.destroy();
@@ -1613,6 +1622,10 @@ int ObServer::stop()
     ctas_clean_up_timer_.stop();
     FLOG_INFO("ctas clean up timer stopped");
 
+    FLOG_INFO("begin to stop ai column worker timer");
+    ai_column_worker_timer_.stop();
+    FLOG_INFO("ai column worker timer stopped");
+
     FLOG_INFO("begin to stop inner sql proxy");
     sql_proxy_.stop();
     ddl_sql_proxy_.stop();
@@ -1942,6 +1955,7 @@ int ObServer::init_config_module()
   } else if (OB_FAIL(server_gtimer_.init("ServerGTimer", ObMemAttr("ServerGTimer")))) {
   } else if (OB_FAIL(sql_mem_timer_.init("SqlMemTimer", ObMemAttr("SqlMemTimer")))) {
   } else if (OB_FAIL(ctas_clean_up_timer_.init("CTASCleanUp", ObMemAttr("CTASCleanUp")))) {
+  } else if (OB_FAIL(ai_column_worker_timer_.init("AIColumnWorker", ObMemAttr("AIColumnWorker")))) {
   }
 
   return ret;
@@ -2729,6 +2743,45 @@ void ObServer::ObCTASCleanUpTask::runTimerTask()
   }
 }
 
+ObServer::ObAIColumnWorkerTask::ObAIColumnWorkerTask()
+: obs_(nullptr), is_inited_(false)
+{}
+
+int ObServer::ObAIColumnWorkerTask::init(ObServer *obs, common::ObTimer &timer)
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(is_inited_)) {
+    ret = OB_INIT_TWICE;
+    LOG_ERROR("ObAIColumnWorkerTask has already been inited", KR(ret));
+  } else if (OB_ISNULL(obs)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_ERROR("ObAIColumnWorkerTask init with null ptr", KR(ret), K(obs));
+  } else {
+    obs_ = obs;
+    is_inited_ = true;
+    disable_timeout_check();
+    if (OB_FAIL(timer.schedule(*this, WORKER_INTERVAL, true /*schedule repeatly*/))) {
+    }
+  }
+  return ret;
+}
+
+void ObServer::ObAIColumnWorkerTask::runTimerTask()
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = OB_NOT_INIT;
+    LOG_ERROR("ObAIColumnWorkerTask has not been inited", KR(ret));
+  } else if (OB_ISNULL(obs_)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_ERROR("ai column worker got null ptr", KR(ret));
+  } else if (share::SS_SERVING != GCTX.status_) {
+    // skip ai column tasks until the server is able to serve SQL
+  } else if (OB_FAIL(sql::ObDMLService::run_ai_column_worker(*obs_->get_mysql_proxy()))) {
+    LOG_WARN("run ai column worker failed", KR(ret));
+  }
+}
+
 //Traverse the current session and determine whether the given table schema needs to be deleted according to the session id and last active time
 bool ObServer::ObCTASCleanUp::operator()(sql::ObSQLSessionMgr::Key key,
                                          sql::ObSQLSessionInfo *sess_info)
@@ -2829,6 +2882,14 @@ int ObServer::init_ctas_clean_up_task()
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(ctas_clean_up_task_.init(this, ctas_clean_up_timer_))) {
+  }
+  return ret;
+}
+
+int ObServer::init_ai_column_worker_task()
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(ai_column_worker_task_.init(this, ai_column_worker_timer_))) {
   }
   return ret;
 }

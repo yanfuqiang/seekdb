@@ -15,6 +15,7 @@
  */
 
 #include "config_bridge.h"
+#include "lib/string/ob_string.h"
 #include "sql/resolver/ddl/ob_alter_table_stmt.h"
 #include "query/session/ob_session_access.h"
 #include "sql/session/ob_sql_session_info.h"
@@ -30,13 +31,16 @@ namespace sql
 ObAlterTableStmt::ObAlterTableStmt(common::ObIAllocator *name_pool)
     : ObTableStmt(name_pool, stmt::T_ALTER_TABLE), is_comment_table_(false),
       is_alter_system_(false), fts_arg_allocator_(nullptr), is_alter_triggers_(false),
-      alter_table_action_count_(0)
+      alter_table_action_count_(0), has_ai_retry_action_(false), ai_retry_table_id_(OB_INVALID_ID),
+      ai_retry_column_id_(OB_INVALID_ID)
 {
 }
 
 ObAlterTableStmt::ObAlterTableStmt()
     : ObTableStmt(stmt::T_ALTER_TABLE), is_comment_table_(false), is_alter_system_(false),
-      fts_arg_allocator_(nullptr), is_alter_triggers_(false), alter_table_action_count_(0)
+      fts_arg_allocator_(nullptr), is_alter_triggers_(false), alter_table_action_count_(0),
+      has_ai_retry_action_(false), ai_retry_table_id_(OB_INVALID_ID),
+      ai_retry_column_id_(OB_INVALID_ID)
 {
 }
 
@@ -131,6 +135,41 @@ int ObAlterTableStmt::set_exchange_partition_arg(const obcall::ObExchangePartiti
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(exchange_partition_arg_.assign(exchange_partition_arg))) {
+  }
+  return ret;
+}
+
+int ObAlterTableStmt::set_ai_retry_args(const uint64_t table_id,
+                                        const uint64_t column_id,
+                                        const common::ObString &database_name,
+                                        const common::ObString &table_name,
+                                        const common::ObString &column_name,
+                                        const common::ObString &predicate,
+                                        const common::ObString &normalized_expr,
+                                        const common::ObIArray<common::ObString> &rowkey_columns)
+{
+  int ret = OB_SUCCESS;
+  common::ObIAllocator *allocator = alter_table_arg_.alter_table_schema_.get_allocator();
+  if (OB_ISNULL(allocator)) {
+    ret = OB_ERR_UNEXPECTED;
+    SQL_RESV_LOG(WARN, "alter table schema allocator is null", KR(ret));
+  } else if (OB_FAIL(common::ob_write_string(*allocator, database_name, ai_retry_database_name_))) {
+  } else if (OB_FAIL(common::ob_write_string(*allocator, table_name, ai_retry_table_name_))) {
+  } else if (OB_FAIL(common::ob_write_string(*allocator, column_name, ai_retry_column_name_))) {
+  } else if (OB_FAIL(common::ob_write_string(*allocator, predicate, ai_retry_predicate_))) {
+  } else if (OB_FAIL(common::ob_write_string(*allocator, normalized_expr, ai_retry_normalized_expr_))) {
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < rowkey_columns.count(); ++i) {
+      common::ObString column;
+      if (OB_FAIL(common::ob_write_string(*allocator, rowkey_columns.at(i), column))) {
+      } else if (OB_FAIL(ai_retry_rowkey_columns_.push_back(column))) {
+      }
+    }
+    if (OB_SUCC(ret)) {
+      ai_retry_table_id_ = table_id;
+      ai_retry_column_id_ = column_id;
+      has_ai_retry_action_ = true;
+    }
   }
   return ret;
 }

@@ -5482,6 +5482,18 @@ bool ObTableSchema::has_lob_column(const bool ignore_unused_column) const
   return bool_ret;
 }
 
+bool ObTableSchema::has_ai_column() const
+{
+  bool bool_ret = false;
+  for (int64_t i = 0; !bool_ret && i < column_cnt_; ++i) {
+    ObColumnSchemaV2 &col = *column_array_[i];
+    if (col.is_ai_column()) {
+      bool_ret = true;
+    }
+  }
+  return bool_ret;
+}
+
 int64_t ObTableSchema::get_lob_columns_count() const
 {
   int64_t lob_cols_cnt = 0;

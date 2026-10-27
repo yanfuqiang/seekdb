@@ -42,6 +42,9 @@
 #include "sql/optimizer/ob_opt_selectivity.h"
 #include "sql/das/ob_domain_id.h"
 #include "query/vector/ob_vector_index_util.h"
+#include "lib/string/ob_sql_string.h"
+#include "common/mysqlclient/ob_mysql_result.h"
+#include "share/schema/ob_schema_struct.h"
 #include "sql/engine/expr/ob_expr_regexp.h"
 #include "sql/resolver/dcl/ob_dcl_resolver.h"
 #include "sql/resolver/ddl/ob_ddl_resolver.h"
@@ -1831,6 +1834,92 @@ int ObDMLResolver::resolve_basic_column_ref(const ObQualifiedName &q_name, ObRaw
   return ret;
 }
 
+// an ai column value is invisible to user statements while any row of the
+// column is not ready, inner sessions are the readers of ai column metadata
+static int check_ai_column_unfinished_row(common::ObISQLClient &sql_proxy,
+                                          ObSchemaGetterGuard &schema_guard,
+                                          const ObTableSchema &table_schema,
+                                          const ObColumnSchemaV2 &ai_column,
+                                          bool &unfinished)
+{
+  int ret = OB_SUCCESS;
+  const ObDatabaseSchema *database_schema = NULL;
+  const ObString table_name = table_schema.get_table_name_str();
+  const ObString ai_column_name = ai_column.get_column_name_str();
+  ObSqlString sql;
+  ObISQLClient::ReadResult res;
+  common::sqlclient::ObMySQLResult *result = NULL;
+  unfinished = false;
+  if (OB_FAIL(schema_guard.get_database_schema(table_schema.get_database_id(),
+                                               database_schema))) {
+    LOG_WARN("get database schema of ai column failed", K(ret),
+             K(table_schema.get_database_id()));
+  } else if (OB_ISNULL(database_schema)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("database schema of ai column is null", K(ret),
+             K(table_schema.get_database_id()));
+  } else if (OB_FAIL(sql.append_fmt(
+               "select 1 from `%.*s`.`%.*s` "
+               "where `%s%.*s` is null or `%s%.*s` <> %ld limit 1",
+               database_schema->get_database_name_str().length(),
+               database_schema->get_database_name_str().ptr(),
+               table_name.length(), table_name.ptr(),
+               AI_COLUMN_STATE_COLUMN_PREFIX,
+               ai_column_name.length(), ai_column_name.ptr(),
+               AI_COLUMN_STATE_COLUMN_PREFIX,
+               ai_column_name.length(), ai_column_name.ptr(),
+               AI_COLUMN_STATE_READY))) {
+    LOG_WARN("build ai column strict read sql failed", K(ret));
+  } else if (OB_FAIL(sql_proxy.read(res, sql.ptr()))) {
+    LOG_WARN("read ai column state failed", K(ret), K(sql));
+  } else if (OB_ISNULL(result = res.get_result())) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("ai column state result is null", K(ret));
+  } else if (OB_FAIL(result->next())) {
+    if (OB_ITER_END != ret) {
+      LOG_WARN("iterate ai column state failed", K(ret));
+    } else {
+      ret = OB_SUCCESS;
+    }
+  } else {
+    unfinished = true;
+  }
+  return ret;
+}
+
+int ObDMLResolver::check_ai_column_strict_read(const ObTableSchema &table_schema,
+                                               const ObColumnSchemaV2 &ai_column)
+{
+  int ret = OB_SUCCESS;
+  bool strict_read = false;
+  bool unfinished = false;
+  ObSchemaGetterGuard *schema_guard = NULL;
+  if (OB_ISNULL(session_info_) || OB_ISNULL(schema_checker_)
+      || OB_ISNULL(schema_guard = schema_checker_->get_schema_guard())) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("invalid resolver context for ai column strict read", K(ret));
+  } else if (!ai_column.is_ai_column() || session_info_->is_inner()) {
+    // only user statements referencing an ai column are checked
+  } else if (OB_FAIL(session_info_->get_sys_variable(
+               share::SYS_VAR_AI_COLUMN_STRICT_READ, strict_read))) {
+    LOG_WARN("get ai column strict read sysvar failed", K(ret));
+  } else if (!strict_read) {
+    // strict read is disabled
+  } else if (OB_ISNULL(params_.sql_proxy_)
+             && OB_ISNULL(params_.sql_proxy_ = GCTX.sql_proxy_)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("sql proxy of resolver is null", K(ret));
+  } else if (OB_FAIL(check_ai_column_unfinished_row(*params_.sql_proxy_, *schema_guard,
+                                                    table_schema, ai_column, unfinished))) {
+  } else if (unfinished) {
+    ret = OB_AI_COLUMN_HAS_UNFINISHED_TASK;
+    LOG_USER_ERROR(OB_AI_COLUMN_HAS_UNFINISHED_TASK,
+                   static_cast<int64_t>(table_schema.get_table_id()),
+                   static_cast<int64_t>(ai_column.get_column_id()));
+  }
+  return ret;
+}
+
 int ObDMLResolver::resolve_basic_column_item(const TableItem &table_item,
                                              const ObString &column_name,
                                              bool include_hidden,
@@ -1888,8 +1977,10 @@ int ObDMLResolver::resolve_basic_column_item(const TableItem &table_item,
       //do nothing
     } else if (OB_FAIL(schema_checker_->get_table_schema( tid, table_schema))) {
     } else if (OB_FAIL(get_column_schema(tid, column_name, col_schema, include_hidden))) {
-    } else if (OB_ISNULL(col_schema)) {
+    } else if (OB_ISNULL(col_schema) || OB_ISNULL(table_schema)) {
       ret = OB_ERR_UNEXPECTED;
+    } else if (col_schema->is_ai_column()
+               && OB_FAIL(check_ai_column_strict_read(*table_schema, *col_schema))) {
     } else if (OB_FAIL(ObRawExprUtils::build_column_expr(*params_.expr_factory_, *col_schema, session_info_, col_expr))) {
     } else if (OB_FAIL(table_schema->is_unique_key_column(*schema_guard,
                                                           col_schema->get_column_id(),

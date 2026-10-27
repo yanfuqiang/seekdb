@@ -623,7 +623,10 @@ ObTableModifyOp::ObTableModifyOp(ObExecContext &ctx,
     execute_single_row_(false),
     dml_modify_rows_(ctx.get_allocator()),
     last_store_row_(),
-    saved_session_(NULL)
+    saved_session_(NULL),
+    ai_check_cached_(false),
+    ai_check_table_id_(OB_INVALID_ID),
+    cached_need_ai_(false)
 {
   obj_print_params_ = CREATE_OBJ_PRINT_PARAM(ctx_.get_my_session());
   obj_print_params_.need_cast_expr_ = true;
@@ -827,6 +830,30 @@ OB_INLINE int ObTableModifyOp::init_foreign_key_operation()
     need_foreign_key_check_ = MY_SPEC.need_foreign_key_check_;
   }
   return ret;
+}
+
+bool ObTableModifyOp::need_ai_column_process(const ObDMLBaseCtDef &dml_ctdef)
+{
+  bool need = false;
+  if (dml_ctdef.is_primary_index_) {
+    const uint64_t table_id = dml_ctdef.das_base_ctdef_.index_tid_;
+    if (!ai_check_cached_ || ai_check_table_id_ != table_id) {
+      bool has_ai_column = false;
+      ObSQLCtx *sql_ctx = ctx_.get_sql_ctx();
+      ObSchemaGetterGuard *schema_guard = NULL == sql_ctx ? NULL : sql_ctx->schema_guard_;
+      const ObTableSchema *table_schema = NULL;
+      if (NULL != schema_guard
+          && OB_SUCCESS == schema_guard->get_table_schema(table_id, table_schema)
+          && NULL != table_schema) {
+        has_ai_column = table_schema->has_ai_column();
+      }
+      ai_check_cached_ = true;
+      ai_check_table_id_ = table_id;
+      cached_need_ai_ = has_ai_column;
+    }
+    need = cached_need_ai_;
+  }
+  return need;
 }
 
 int ObTableModifyOp::inner_rescan()

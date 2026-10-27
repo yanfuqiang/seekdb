@@ -96,6 +96,25 @@ public:
   const ObTableSchema &get_alter_table_schema() const { return alter_table_arg_.alter_table_schema_; }
   ObTableSchema &get_alter_table_schema() { return alter_table_arg_.alter_table_schema_; }
   obcall::ObExchangePartitionArg &get_exchange_partition_arg() { return exchange_partition_arg_;}
+
+  bool has_ai_retry_action() const { return has_ai_retry_action_; }
+  int set_ai_retry_args(const uint64_t table_id,
+                        const uint64_t column_id,
+                        const common::ObString &database_name,
+                        const common::ObString &table_name,
+                        const common::ObString &column_name,
+                        const common::ObString &predicate,
+                        const common::ObString &normalized_expr,
+                        const common::ObIArray<common::ObString> &rowkey_columns);
+  uint64_t get_ai_retry_table_id() const { return ai_retry_table_id_; }
+  uint64_t get_ai_retry_column_id() const { return ai_retry_column_id_; }
+  const common::ObString &get_ai_retry_database_name() const { return ai_retry_database_name_; }
+  const common::ObString &get_ai_retry_table_name() const { return ai_retry_table_name_; }
+  const common::ObString &get_ai_retry_column_name() const { return ai_retry_column_name_; }
+  const common::ObString &get_ai_retry_predicate() const { return ai_retry_predicate_; }
+  const common::ObString &get_ai_retry_normalized_expr() const { return ai_retry_normalized_expr_; }
+  const common::ObSArray<common::ObString> &get_ai_retry_rowkey_columns() const
+  { return ai_retry_rowkey_columns_; }
   int set_exchange_partition_arg(const obcall::ObExchangePartitionArg &exchange_partition_arg);
   inline void set_lock_session_info(const uint32_t session_id,
                                     const int64_t create_ts)
@@ -114,6 +133,15 @@ private:
   obcall::ObAlterTriggerArg tg_arg_;
   uint64_t alter_table_action_count_;
   obcall::ObExchangePartitionArg exchange_partition_arg_;
+  bool has_ai_retry_action_;
+  uint64_t ai_retry_table_id_;
+  uint64_t ai_retry_column_id_;
+  common::ObString ai_retry_database_name_;
+  common::ObString ai_retry_table_name_;
+  common::ObString ai_retry_column_name_;
+  common::ObString ai_retry_predicate_;
+  common::ObString ai_retry_normalized_expr_;
+  common::ObSArray<common::ObString> ai_retry_rowkey_columns_;
 };
 
 inline int ObAlterTableStmt::set_tz_info_wrap(const common::ObTimeZoneInfoWrap &tz_info_wrap)
