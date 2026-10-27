@@ -12804,9 +12804,60 @@ bool ObTransformUtils::is_full_group_by(ObSelectStmt& stmt, ObSQLMode mode)
   return !stmt.has_order_by() && is_only_full_group_by_on(mode);
 }
 
+int ObTransformUtils::check_need_calc_match_score(ObExecContext *exec_ctx,
+                                                  const ObDMLStmt *stmt,
+                                                  ObRawExpr *match_expr,
+                                                  bool &need_calc,
+                                                  ObIArray<ObExprConstraint> &constraints)
+{
+  int ret = OB_SUCCESS;
+  ObSEArray<ObRawExpr *, 16> relation_exprs;
+  need_calc = false;
+  if (OB_ISNULL(exec_ctx) || OB_ISNULL(stmt) || OB_ISNULL(match_expr)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(stmt->get_relation_exprs(relation_exprs))) {
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && !need_calc && i < relation_exprs.count(); ++i) {
+    ObSEArray<ObMatchFunRawExpr *, 2> curr_match_exprs;
+    bool contains_match_expr = false;
+    bool used_as_condition = false;
+    bool relation_need_calc = false;
+    if (OB_FAIL(ObRawExprUtils::extract_match_exprs(relation_exprs.at(i), curr_match_exprs))) {
+    }
+    for (int64_t j = 0; OB_SUCC(ret) && !contains_match_expr && j < curr_match_exprs.count(); ++j) {
+      contains_match_expr = curr_match_exprs.at(j) == match_expr;
+    }
+    if (OB_FAIL(ret) || !contains_match_expr) {
+    } else {
+      if (ObOptimizerUtil::find_item(stmt->get_condition_exprs(), relation_exprs.at(i))) {
+        used_as_condition = true;
+      } else if (stmt->is_select_stmt() && ObOptimizerUtil::find_item(
+          static_cast<const ObSelectStmt *>(stmt)->get_having_exprs(), relation_exprs.at(i))) {
+        used_as_condition = true;
+      } else if (OB_FAIL(check_expr_used_as_condition(stmt,
+                                                      relation_exprs.at(i),
+                                                      match_expr,
+                                                      used_as_condition))) {
+      }
+      if (OB_FAIL(ret)) {
+      } else if (!used_as_condition) {
+        need_calc = true;
+      } else if (OB_FAIL(inner_check_need_calc_match_score(exec_ctx,
+                                                           relation_exprs.at(i),
+                                                           match_expr,
+                                                           relation_need_calc,
+                                                           constraints))) {
+      } else if (relation_need_calc) {
+        need_calc = true;
+      }
+    }
+  }
+  return ret;
+}
+
 int ObTransformUtils::inner_check_need_calc_match_score(ObExecContext *exec_ctx,
-                                                        ObRawExpr* expr, 
-                                                        ObRawExpr* match_expr, 
+                                                        ObRawExpr* expr,
+                                                        ObRawExpr* match_expr,
                                                         bool &need_calc,
                                                         ObIArray<ObExprConstraint> &constraints)
 {
@@ -12900,9 +12951,9 @@ int ObTransformUtils::check_expr_eq_zero(ObExecContext *ctx,
   return ret;
 }
 
-int ObTransformUtils::check_expr_used_as_condition(ObDMLStmt *stmt, 
-                                                  ObRawExpr *root_expr, 
-                                                  ObRawExpr *expr, 
+int ObTransformUtils::check_expr_used_as_condition(const ObDMLStmt *stmt,
+                                                  ObRawExpr *root_expr,
+                                                  ObRawExpr *expr,
                                                   bool &used_as_condition)
 {
   int ret = OB_SUCCESS;
@@ -12917,7 +12968,7 @@ int ObTransformUtils::check_expr_used_as_condition(ObDMLStmt *stmt,
   } else if (ObOptimizerUtil::find_item(stmt->get_condition_exprs(), cur_expr)) {
     parent_as_condition = true;
   } else if (stmt->is_select_stmt() && ObOptimizerUtil::find_item(
-             static_cast<ObSelectStmt*>(stmt)->get_having_exprs(), cur_expr)) {
+             static_cast<const ObSelectStmt*>(stmt)->get_having_exprs(), cur_expr)) {
     parent_as_condition = true;
   }
   if (OB_SUCC(ret)) {

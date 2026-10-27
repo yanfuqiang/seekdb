@@ -22,6 +22,7 @@
 #include "common/json_type/ob_json_base.h"
 #include "common/json_type/ob_json_tree.h"
 #include "lib/ob_errno.h"
+#include "lib/lock/ob_spin_lock.h"
 #include "lib/oblog/ob_log_module.h"
 #include "lib/string/ob_string.h"
 #include "lib/utility/ob_macro_utils.h"
@@ -39,6 +40,139 @@ namespace oceanbase
 {
 namespace sql
 {
+namespace
+{
+struct ObTokenizeCacheKey
+{
+  ObString fulltext_;
+  ObString parser_name_;
+  ObCollationType collation_;
+};
+
+class ObTokenizeResultCache final
+{
+public:
+  static const int64_t CACHE_ENTRY_COUNT = 4;
+  static const int64_t MAX_FULLTEXT_LENGTH = 4096;
+  static const int64_t MAX_PARSER_NAME_LENGTH = 128;
+  static const int64_t MAX_RESULT_LENGTH = 32768;
+
+  static ObTokenizeResultCache &instance()
+  {
+    static ObTokenizeResultCache cache;
+    return cache;
+  }
+
+  bool can_cache(const ObTokenizeCacheKey &key) const
+  {
+    return key.fulltext_.length() <= MAX_FULLTEXT_LENGTH
+        && key.parser_name_.length() <= MAX_PARSER_NAME_LENGTH;
+  }
+
+  int get(const ObTokenizeCacheKey &key,
+          const ObExpr &expr,
+          ObEvalCtx &ctx,
+          ObDatum &result,
+          bool &found)
+  {
+    int ret = OB_SUCCESS;
+    found = false;
+    common::ObSpinLockGuard guard(lock_);
+    for (int64_t i = 0; OB_SUCC(ret) && !found && i < CACHE_ENTRY_COUNT; ++i) {
+      CacheEntry &entry = entries_[i];
+      if (entry.matches(key)) {
+        ObString cached_result(entry.result_length_, entry.result_);
+        if (OB_FAIL(ObJsonExprHelper::pack_json_str_res(expr, ctx, result, cached_result))) {
+        } else {
+          found = true;
+        }
+      }
+    }
+    return ret;
+  }
+
+  void put(const ObTokenizeCacheKey &key, const ObString &result)
+  {
+    if (!can_cache(key) || result.length() > MAX_RESULT_LENGTH) {
+      return;
+    }
+    common::ObSpinLockGuard guard(lock_);
+    for (int64_t i = 0; i < CACHE_ENTRY_COUNT; ++i) {
+      if (entries_[i].matches(key)) {
+        entries_[i].assign(key, result);
+        return;
+      }
+    }
+    entries_[next_entry_].assign(key, result);
+    next_entry_ = (next_entry_ + 1) % CACHE_ENTRY_COUNT;
+  }
+
+private:
+  struct CacheEntry
+  {
+    CacheEntry()
+        : collation_(CS_TYPE_INVALID), fulltext_length_(0), parser_name_length_(0),
+          result_length_(0), valid_(false)
+    {}
+
+    bool matches(const ObTokenizeCacheKey &key) const
+    {
+      return valid_
+          && collation_ == key.collation_
+          && fulltext_length_ == key.fulltext_.length()
+          && parser_name_length_ == key.parser_name_.length()
+          && (0 == fulltext_length_
+              || 0 == MEMCMP(fulltext_, key.fulltext_.ptr(), fulltext_length_))
+          && (0 == parser_name_length_
+              || 0 == MEMCMP(parser_name_, key.parser_name_.ptr(), parser_name_length_));
+    }
+
+    void assign(const ObTokenizeCacheKey &key, const ObString &result)
+    {
+      collation_ = key.collation_;
+      fulltext_length_ = key.fulltext_.length();
+      parser_name_length_ = key.parser_name_.length();
+      result_length_ = result.length();
+      if (fulltext_length_ > 0) {
+        MEMCPY(fulltext_, key.fulltext_.ptr(), fulltext_length_);
+      }
+      if (parser_name_length_ > 0) {
+        MEMCPY(parser_name_, key.parser_name_.ptr(), parser_name_length_);
+      }
+      if (result_length_ > 0) {
+        MEMCPY(result_, result.ptr(), result_length_);
+      }
+      valid_ = true;
+    }
+
+    char fulltext_[MAX_FULLTEXT_LENGTH];
+    char parser_name_[MAX_PARSER_NAME_LENGTH];
+    char result_[MAX_RESULT_LENGTH];
+    ObCollationType collation_;
+    int32_t fulltext_length_;
+    int32_t parser_name_length_;
+    int32_t result_length_;
+    bool valid_;
+  };
+
+  ObTokenizeResultCache() : lock_(), entries_(), next_entry_(0) {}
+
+  common::ObSpinLock lock_;
+  CacheEntry entries_[CACHE_ENTRY_COUNT];
+  int64_t next_entry_;
+  DISALLOW_COPY_AND_ASSIGN(ObTokenizeResultCache);
+};
+
+bool is_cacheable_builtin_parser(ObString parser_name)
+{
+  if (nullptr != parser_name.find('.')) {
+    parser_name = parser_name.split_on('.');
+  }
+  return 0 == parser_name.case_compare("ik") || 0 == parser_name.case_compare("beng");
+}
+
+} // namespace
+
 ObExprTokenize::ObExprTokenize(common::ObIAllocator &alloc)
     : ObStringExprOperator(alloc,
                            T_FUN_TOKENIZE,
@@ -59,12 +193,33 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
 
   ObIJsonBase *json_result = nullptr;
   TokenizeParam param;
+  ObTokenizeCacheKey cache_key;
+  bool cacheable = false;
+  bool cache_hit = false;
 
   // check param num, which is checked in ObExprOperator::calc_result_typeN.
   if (OB_UNLIKELY(expr.arg_cnt_ < 1 || expr.arg_cnt_ > 3)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(parse_param(expr, ctx, temp_allocator, param))) {
+  } else if (FALSE_IT(cache_key.fulltext_ = param.fulltext_)) {
+  } else if (FALSE_IT(cache_key.parser_name_ = param.parser_name_)) {
+  } else if (FALSE_IT(cache_key.collation_ = param.meta_.get_collation_type())) {
+  } else if (FALSE_IT(cacheable = expr.arg_cnt_ <= 2
+                                  && is_cacheable_builtin_parser(param.parser_name_)
+                                  && ObTokenizeResultCache::instance().can_cache(cache_key))) {
+  } else if (cacheable
+             && OB_FAIL(ObTokenizeResultCache::instance().get(
+                    cache_key, expr, ctx, expr_datum, cache_hit))) {
+  } else if (cache_hit) {
   } else if (OB_FAIL(tokenize_fulltext(param, param.output_mode_, temp_allocator, json_result))) {
+  } else if (cacheable) {
+    ObString raw_binary;
+    if (OB_FAIL(ObJsonWrapper::get_raw_binary(json_result, raw_binary, &temp_allocator))) {
+    } else {
+      ObTokenizeResultCache::instance().put(cache_key, raw_binary);
+      if (OB_FAIL(ObJsonExprHelper::pack_json_str_res(expr, ctx, expr_datum, raw_binary))) {
+      }
+    }
   } else if (OB_FAIL(ObJsonExprHelper::pack_json_res(expr,
                                                      ctx,
                                                      temp_allocator,
@@ -85,8 +240,6 @@ int ObExprTokenize::tokenize_fulltext(const TokenizeParam &param,
   const int64_t ft_word_bkt_cnt = MIN(MAX(param.fulltext_.length() / 2, 2), 997);
   int64_t doc_len = 0;
   storage::ObFTWordMap token_map;
-
-  ObArenaAllocator tmp_parse_alloc(ObMemAttr("Tmp buffer"));
 
   if (TokenizeParam::OUTPUT_MODE::DEFAULT != mode && TokenizeParam::OUTPUT_MODE::ALL != mode) {
     ret = OB_INVALID_ARGUMENT;

@@ -83,14 +83,16 @@ int ObStopWordChecker::check_stopword(const ObFTWord &word, bool &is_stopword)
     ret = OB_INVALID_ARGUMENT;
   } else {
     common::ObString cmp_str;
-    // do nothing set out with in if type is the same.
-    if (OB_FAIL(common::ObCharset::charset_convert(
+    if (word.get_collation_type() == stopword_type_.get_collation_type()) {
+      cmp_str = word.get_word().get_string();
+    } else if (OB_FAIL(common::ObCharset::charset_convert(
                                        allocator,
                                        word.get_word().get_string(),
                                        word.get_collation_type(),
                                        stopword_type_.get_collation_type(),
                                        cmp_str))) {
-    } else {
+    }
+    if (OB_SUCC(ret)) {
       ObFTWord converted(cmp_str.length(), cmp_str.ptr(), stopword_type_);
       ret = stopword_set_.exist_refactored(converted);
       if (OB_HASH_NOT_EXIST == ret) {
