@@ -34,6 +34,8 @@ int bind_json_table(ObDMLResolver &resolver, const TableFunctionCall &call, Tabl
 { return resolver.bind_json_table_function(call, item); }
 int bind_hybrid(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
 { return resolver.bind_hybrid_table_function(call, item); }
+int bind_file_table(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
+{ return resolver.bind_file_table_function(call, item); }
 TableFunctionColumn generator_column()
 {
   TableFunctionColumn result;
@@ -53,8 +55,27 @@ const TableFunctionDescriptor BUILTINS[] = {
   {JSON_TABLE_FUNCTION_ID, "json_table", "json_table(document, path COLUMNS (...))",
    "Columns are declared by COLUMNS.", 0, -1, nullptr, 0, bind_json_table, create_json_table_scan, nullptr, nullptr, 0, compile_json_table_options, true},
   {HYBRID_SEARCH_FUNCTION_ID, "hybrid_search", "hybrid_search(table_name, configuration)",
-   "Columns come from the bound search query.", 2, 2, nullptr, 0, bind_hybrid, nullptr}
+   "Columns come from the bound search query.", 2, 2, nullptr, 0, bind_hybrid, nullptr},
+  {READ_CSV_FUNCTION_ID, "read_csv", "read_csv(uri, option = value, ...)",
+   "Reads CSV rows; the first record supplies column names.", 1, -1, nullptr, 0, bind_file_table,
+   create_file_table_scan, nullptr, nullptr, 0, compile_file_table_options},
+  {READ_JSON_FUNCTION_ID, "read_json", "read_json(uri, option = value, ...)",
+   "Reads newline-delimited JSON records.", 1, -1, nullptr, 0, bind_file_table,
+   create_file_table_scan, nullptr, nullptr, 0, compile_file_table_options},
+  {READ_PARQUET_FUNCTION_ID, "read_parquet", "read_parquet(uri, option = value, ...)",
+   "Reads rows from a Parquet file.", 1, -1, nullptr, 0, bind_file_table,
+   create_file_table_scan, nullptr, nullptr, 0, compile_file_table_options},
+  {GLOB_FUNCTION_ID, "glob", "glob(pattern)", "Lists files matching a glob pattern.",
+   1, 1, nullptr, 0, bind_file_table, create_file_table_scan, nullptr, nullptr, 0,
+   compile_file_table_options}
 };
+}
+
+int compile_file_table_options(const TableItem &table, ObIAllocator &allocator, ObString &options)
+{
+  UNUSED(allocator);
+  options = table.table_function_options_;
+  return OB_SUCCESS;
 }
 
 int bind_fixed_table_function(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)

@@ -16,6 +16,10 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/table_function/table_function.h"
+#include "sql/table_function/ob_file_scan_utils.h"
+#include "sql/table_function/ob_file_table_options.h"
+#include "share/system_variable/ob_sys_var_class_type.h"
+#include <algorithm>
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
 #include "sql/resolver/dml/ob_view_table_resolver.h"
@@ -3600,6 +3604,356 @@ int ObDMLResolver::bind_generator_table_function(const TableFunctionCall &call, 
     OZ (ObRawExprUtils::try_add_cast_expr_above(params_.expr_factory_, session_info_, *arg, type, cast));
     if (OB_SUCC(ret)) { item->function_table_expr_->get_param_expr(0) = cast; }
     OZ (item->function_table_expr_->extract_info());
+  }
+  return ret;
+}
+
+namespace {
+
+const ParseNode *get_file_option_name(const ParseNode *argument)
+{
+  const ParseNode *name = nullptr;
+  if (OB_NOT_NULL(argument) && T_OP_EQ == argument->type_ && 2 == argument->num_child_
+      && OB_NOT_NULL(argument->children_[0])) {
+    const ParseNode *left = argument->children_[0];
+    if (T_COLUMN_REF == left->type_ && 3 == left->num_child_ && OB_NOT_NULL(left->children_[2])
+        && T_IDENT == left->children_[2]->type_) {
+      name = left->children_[2];
+    }
+  }
+  return name;
+}
+
+int get_file_option_bool(const ParseNode &value, bool &result)
+{
+  int ret = OB_SUCCESS;
+  if (T_BOOL == value.type_) {
+    result = 0 != value.value_;
+  } else {
+    ret = OB_INVALID_ARGUMENT;
+  }
+  return ret;
+}
+
+int get_file_option_int(const ParseNode &value, int64_t &result)
+{
+  int ret = OB_SUCCESS;
+  const ParseNode *node = &value;
+  bool negative = false;
+  if (T_OP_NEG == node->type_ && 1 == node->num_child_) {
+    negative = true;
+    node = node->children_[0];
+  }
+  if (OB_ISNULL(node)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (T_INT == node->type_) {
+    result = negative ? -static_cast<int64_t>(node->value_)
+                      : static_cast<int64_t>(node->value_);
+  } else if (T_UINT64 == node->type_ && !negative) {
+    result = static_cast<int64_t>(node->value_);
+  } else {
+    ret = OB_INVALID_ARGUMENT;
+  }
+  return ret;
+}
+
+int make_file_parse_error(const ParseNode *node)
+{
+  const int32_t text_len = OB_ISNULL(node) ? 0 : static_cast<int32_t>(node->text_len_);
+  LOG_USER_ERROR(OB_ERR_PARSE_SQL, ob_errpkt_strerror(OB_ERR_PARSER_SYNTAX),
+                 text_len, OB_ISNULL(node) ? "" : node->raw_text_, 1);
+  return OB_ERR_PARSE_SQL;
+}
+
+int write_file_column_def(const ObFileColumnSchema &source, ObIAllocator &allocator,
+                          ObFileTableColumnDef &column)
+{
+  int ret = OB_SUCCESS;
+  OZ (ob_write_string(allocator, ObString(static_cast<int32_t>(source.source_name_.size()),
+                                          source.source_name_.data()), column.source_name_));
+  OZ (ob_write_string(allocator, ObString(static_cast<int32_t>(source.column_name_.size()),
+                                          source.column_name_.data()), column.column_name_));
+  OZ (ob_write_string(allocator, ObString(static_cast<int32_t>(source.source_type_name_.size()),
+                                          source.source_type_name_.data()),
+                      column.source_type_name_));
+  OX (column.type_ = source.type_);
+  OX (column.nullable_ = source.nullable_);
+  OX (column.max_length_ = source.max_length_);
+  return ret;
+}
+
+int resolve_file_column_meta(const ObFileTableColumnDef &column, ObCollationType collation,
+                             ObObjMeta &meta, ObAccuracy &accuracy)
+{
+  int ret = OB_SUCCESS;
+  switch (column.type_) {
+    case ObFileColumnType::BOOLEAN:
+      meta.set_tinyint();
+      break;
+    case ObFileColumnType::BIGINT:
+      meta.set_int();
+      break;
+    case ObFileColumnType::DOUBLE:
+      meta.set_double();
+      break;
+    case ObFileColumnType::VARCHAR:
+      meta.set_varchar();
+      meta.set_collation_type(collation);
+      meta.set_collation_level(CS_LEVEL_IMPLICIT);
+      break;
+    case ObFileColumnType::DATE:
+      meta.set_date();
+      break;
+    case ObFileColumnType::DATETIME:
+      meta.set_datetime();
+      break;
+    default:
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("unsupported file column type", K(ret), K(column.type_));
+      break;
+  }
+  if (OB_SUCC(ret)) {
+    accuracy = ObAccuracy::DDL_DEFAULT_ACCURACY[meta.get_type()];
+    if (ObFileColumnType::VARCHAR == column.type_) {
+      const int64_t length = std::min(std::max(column.max_length_, static_cast<int64_t>(1)),
+                                      OB_MAX_VARCHAR_LENGTH);
+      accuracy.set_length(static_cast<int32_t>(length));
+    }
+  }
+  return ret;
+}
+
+} // namespace
+
+int ObDMLResolver::bind_file_table_function(const TableFunctionCall &call, TableItem *&item)
+{
+  int ret = OB_SUCCESS;
+  bool enabled = false;
+  bool header_specified = false;
+  bool header = true;
+  ObString secure_file_priv;
+  ObString path;
+  ObFileFormat requested_format = ObFileFormat::INVALID;
+  bool is_glob = false;
+  item = nullptr;
+  if (OB_ISNULL(call.descriptor_) || OB_ISNULL(call.arguments_) || call.arguments_->num_child_ < 1
+      || OB_ISNULL(session_info_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(session_info_->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, enabled))) {
+  } else if (!enabled) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "file table when enable_file_sql is off");
+  } else if (OB_FAIL(session_info_->get_secure_file_priv(secure_file_priv))) {
+  } else {
+    const uint64_t function_id = call.descriptor_->id_;
+    is_glob = GLOB_FUNCTION_ID == function_id;
+    if (is_glob) {
+      requested_format = ObFileFormat::AUTO;
+    } else if (READ_CSV_FUNCTION_ID == function_id) {
+      requested_format = ObFileFormat::CSV;
+    } else if (READ_JSON_FUNCTION_ID == function_id) {
+      requested_format = ObFileFormat::JSONL;
+    } else if (READ_PARQUET_FUNCTION_ID == function_id) {
+      requested_format = ObFileFormat::PARQUET;
+    } else {
+      ret = OB_ERR_UNEXPECTED;
+    }
+  }
+  if (OB_SUCC(ret)) {
+    const ParseNode *path_node = call.arguments_->children_[0];
+    if (OB_ISNULL(path_node) || T_VARCHAR != path_node->type_) {
+      ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "nonconstant file path in file table function");
+    } else {
+      path.assign_ptr(path_node->str_value_, static_cast<int32_t>(path_node->str_len_));
+    }
+  }
+  for (int64_t i = 1; OB_SUCC(ret) && i < call.arguments_->num_child_; ++i) {
+    const ParseNode *argument = call.arguments_->children_[i];
+    const ParseNode *name = get_file_option_name(argument);
+    if (OB_ISNULL(name) || OB_ISNULL(argument->children_[1])) {
+      LOG_WARN("file table function options must be name = value", K(i));
+      ret = make_file_parse_error(argument);
+    } else {
+      const ObString option_name(name->str_len_, name->str_value_);
+      const ParseNode *value = argument->children_[1];
+      if (ObCharset::case_insensitive_equal(option_name, ObString("header"))) {
+        if (OB_FAIL(get_file_option_bool(*value, header))) {
+          LOG_WARN("invalid header option in file table function");
+          ret = make_file_parse_error(argument);
+        } else {
+          header_specified = true;
+        }
+      } else if (ObCharset::case_insensitive_equal(option_name, ObString("sample_size"))) {
+        int64_t sample_size = 0;
+        if (OB_FAIL(get_file_option_int(*value, sample_size))) {
+          LOG_WARN("invalid sample_size option in file table function");
+          ret = make_file_parse_error(argument);
+        } else if (-1 != sample_size) {
+          ret = OB_NOT_SUPPORTED;
+          LOG_USER_ERROR(OB_NOT_SUPPORTED, "sample_size other than -1 in file table function");
+        }
+      } else if (ObCharset::case_insensitive_equal(option_name, ObString("format"))) {
+        if (T_VARCHAR != value->type_) {
+          LOG_WARN("invalid format option in file table function");
+          ret = make_file_parse_error(argument);
+        } else {
+          std::string format_name(value->str_value_, value->str_len_);
+          if (OB_FAIL(ObFileScanUtils::parse_format(format_name, requested_format))) {
+            LOG_WARN("unsupported file format option", K(ret));
+          }
+        }
+      } else {
+        LOG_WARN("unknown file table function option", K(option_name));
+        ret = make_file_parse_error(argument);
+      }
+    }
+  }
+  if (OB_SUCC(ret) && header_specified && !header) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "header = false in file table function");
+  }
+  ObFileTableDef def;
+  std::string canonical_path;
+  if (OB_SUCC(ret)) {
+    const std::string input_path(path.ptr(), path.length());
+    std::string verified_path;
+    if (is_glob) {
+      const size_t slash = input_path.find_last_of('/');
+      const std::string directory = std::string::npos == slash ? std::string(".")
+                                   : input_path.substr(0, slash);
+      const std::string pattern = std::string::npos == slash ? input_path
+                                 : input_path.substr(slash + 1);
+      uint64_t device = 0;
+      uint64_t inode = 0;
+      int64_t modified_time_ns = 0;
+      if (directory.empty() || pattern.empty()) {
+        ret = make_file_parse_error(nullptr);
+      } else if (OB_FAIL(ObFileScanUtils::canonicalize_path(directory, canonical_path))) {
+        LOG_WARN("failed to canonicalize glob directory", K(ret));
+      } else if (OB_FAIL(ObResolverUtils::check_secure_path(
+                   secure_file_priv, ObString(static_cast<int32_t>(canonical_path.size()),
+                                              canonical_path.data())))) {
+      } else if (OB_FAIL(ObFileScanUtils::get_directory_fingerprint(
+                   canonical_path, verified_path, device, inode, modified_time_ns))) {
+        LOG_WARN("failed to fingerprint glob directory", K(ret));
+      } else if (verified_path != canonical_path) {
+        ret = OB_SCHEMA_EAGAIN;
+      } else if (OB_FAIL(ob_write_string(*allocator_,
+                   ObString(static_cast<int32_t>(canonical_path.size()), canonical_path.data()),
+                   def.canonical_path_))) {
+      } else if (OB_FAIL(ob_write_string(*allocator_,
+                   ObString(static_cast<int32_t>(pattern.size()), pattern.data()),
+                   def.source_pattern_))) {
+      } else if (OB_FAIL(ob_write_string(*allocator_, secure_file_priv, def.secure_file_priv_))) {
+      } else {
+        def.kind_ = ObFileTableKind::LIST;
+        def.format_ = ObFileFormat::AUTO;
+        def.device_ = device;
+        def.inode_ = inode;
+        def.modified_time_ns_ = modified_time_ns;
+      }
+    } else {
+      std::vector<ObFileColumnSchema> source_columns;
+      int64_t row_count = 0;
+      ObFileFormat actual_format = ObFileFormat::INVALID;
+      uint64_t device = 0;
+      uint64_t inode = 0;
+      int64_t file_size = 0;
+      int64_t modified_time_ns = 0;
+      if (OB_FAIL(ObFileScanUtils::canonicalize_path(input_path, canonical_path))) {
+        LOG_WARN("failed to canonicalize file path", K(ret));
+      } else if (OB_FAIL(ObResolverUtils::check_secure_path(
+                   secure_file_priv, ObString(static_cast<int32_t>(canonical_path.size()),
+                                              canonical_path.data())))) {
+      } else if (OB_FAIL(ObFileScanUtils::infer_schema(
+                   canonical_path, requested_format, source_columns, row_count, verified_path,
+                   actual_format, device, inode, file_size, modified_time_ns))) {
+        LOG_WARN("failed to infer file table schema", K(ret));
+      } else if (verified_path != canonical_path) {
+        ret = OB_SCHEMA_EAGAIN;
+      } else if (OB_FAIL(ob_write_string(*allocator_,
+                   ObString(static_cast<int32_t>(canonical_path.size()), canonical_path.data()),
+                   def.canonical_path_))) {
+      } else if (OB_FAIL(ob_write_string(*allocator_, secure_file_priv, def.secure_file_priv_))) {
+      } else {
+        def.kind_ = ObFileTableKind::SCAN;
+        def.format_ = actual_format;
+        def.estimated_rows_ = row_count;
+        def.device_ = device;
+        def.inode_ = inode;
+        def.file_size_ = file_size;
+        def.modified_time_ns_ = modified_time_ns;
+        for (int64_t i = 0; OB_SUCC(ret) && i < static_cast<int64_t>(source_columns.size()); ++i) {
+          ObFileTableColumnDef column;
+          OZ (write_file_column_def(source_columns[i], *allocator_, column));
+          OZ (def.columns_.push_back(column));
+        }
+      }
+    }
+  }
+  ObString encoded_options;
+  if (OB_SUCC(ret)) {
+    if (OB_ISNULL(item = get_stmt()->create_table_item(*allocator_))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else if (OB_FAIL(ObFileTableOptions::encode(def, *allocator_, encoded_options))) {
+    } else {
+      ObOpRawExpr *arguments = nullptr;
+      OZ (params_.expr_factory_->create_raw_expr(T_OP_ROW, arguments));
+      OZ (arguments->init_param_exprs(0));
+      OZ (arguments->extract_info());
+      if (OB_SUCC(ret)) {
+        item->type_ = TableItem::FUNCTION_TABLE;
+        item->table_function_id_ = call.descriptor_->id_;
+        item->table_function_requires_all_columns_ = call.descriptor_->requires_all_columns_;
+        item->table_function_options_ = encoded_options;
+        item->table_id_ = generate_table_id();
+        item->table_name_ = ObString::make_string(call.descriptor_->name_);
+        item->alias_name_ = call.alias_ == nullptr ? item->table_name_ :
+          ObString(call.alias_->str_len_, call.alias_->str_value_);
+        item->function_table_expr_ = arguments;
+        OZ (get_stmt()->add_table_item(session_info_, item));
+      }
+    }
+  }
+  ObCollationType collation = CS_TYPE_UTF8MB4_GENERAL_CI;
+  if (OB_SUCC(ret)) {
+    ObCollationType connection_collation = CS_TYPE_INVALID;
+    if (OB_FAIL(session_info_->get_collation_connection(connection_collation))) {
+    } else if (CS_TYPE_INVALID != connection_collation) {
+      collation = connection_collation;
+    }
+  }
+  if (OB_SUCC(ret)) {
+    if (ObFileTableKind::LIST == def.kind_) {
+      ObFileTableColumnDef column;
+      column.source_name_ = ObString("file");
+      column.column_name_ = ObString("file");
+      column.source_type_name_ = ObString("VARCHAR");
+      column.type_ = ObFileColumnType::VARCHAR;
+      column.nullable_ = false;
+      column.max_length_ = OB_MAX_VARCHAR_LENGTH;
+      ObObjMeta meta;
+      ObAccuracy accuracy;
+      ColumnItem *bound = nullptr;
+      OZ (resolve_file_column_meta(column, collation, meta, accuracy));
+      OZ (resolve_function_table_column_item(*item, meta, accuracy, column.column_name_,
+          OB_APP_MIN_COLUMN_ID, bound));
+      if (OB_SUCC(ret)) { bound->expr_->set_result_flag(NOT_NULL_FLAG); }
+    } else {
+      for (int64_t i = 0; OB_SUCC(ret) && i < def.columns_.count(); ++i) {
+        const ObFileTableColumnDef &column = def.columns_.at(i);
+        ObObjMeta meta;
+        ObAccuracy accuracy;
+        ColumnItem *bound = nullptr;
+        OZ (resolve_file_column_meta(column, collation, meta, accuracy));
+        OZ (resolve_function_table_column_item(*item, meta, accuracy, column.column_name_,
+            OB_APP_MIN_COLUMN_ID + i, bound));
+        if (OB_SUCC(ret) && !column.nullable_) {
+          bound->expr_->set_result_flag(NOT_NULL_FLAG);
+        }
+      }
+    }
   }
   return ret;
 }

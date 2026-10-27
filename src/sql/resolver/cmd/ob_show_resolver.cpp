@@ -21,6 +21,9 @@
 #include "sql/resolver/cmd/ob_show_table_status_sql.h"
 #include "sql/printer/ob_schema_printer.h"
 #include "sql/table_function/table_function.h"
+#include "sql/table_function/ob_file_scan_utils.h"
+#include "sql/table_function/ob_file_table_options.h"
+#include "sql/resolver/ddl/ob_explain_stmt.h"
 #include "sql/pl/ob_pl_user_type.h"
 
 using namespace oceanbase::common;
@@ -272,8 +275,82 @@ int ObShowResolver::resolve_table_function_description(const ParseNode &node)
   return ret;
 }
 
+int ObShowResolver::resolve_describe_select(const ParseNode &parse_tree)
+{
+  int ret = OB_SUCCESS;
+  const ParseNode *select_node = NULL;
+  ObSelectStmt *bound = NULL;
+  ObSEArray<ObString, 16> names;
+  ObSEArray<ObString, 16> types;
+  ObSEArray<bool, 16> nullables;
+  ObSqlString sql;
+  if (OB_ISNULL(allocator_) || OB_ISNULL(session_info_) || OB_ISNULL(params_.expr_factory_)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_ISNULL(select_node = parse_tree.children_[0]) || T_SELECT != select_node->type_) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    ObResolverParams bind_params = params_;
+    bind_params.is_from_show_resolver_ = false;
+    ObSelectResolver binder(bind_params);
+    if (OB_FAIL(binder.resolve(*select_node))) {
+    } else if (OB_ISNULL(bound = binder.get_select_stmt())) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      const ObIArray<TableItem*> &tables = bound->get_table_items();
+      for (int64_t i = 0; OB_SUCC(ret) && i < tables.count(); ++i) {
+        const TableItem *table = tables.at(i);
+        ObFileTableDef def;
+        if (OB_ISNULL(table) || !table->is_file_table()) {
+        } else if (OB_FAIL(ObFileTableOptions::decode(table->table_function_options_, def))) {
+        } else if (ObFileTableKind::LIST == def.kind_) {
+          OZ(names.push_back(ObString::make_string("file")));
+          OZ(types.push_back(ObString::make_string("VARCHAR")));
+          OZ(nullables.push_back(false));
+        } else {
+          for (int64_t j = 0; OB_SUCC(ret) && j < def.columns_.count(); ++j) {
+            const ObFileTableColumnDef &column = def.columns_.at(j);
+            OZ(names.push_back(column.column_name_));
+            OZ(types.push_back(ObString::make_string(ObFileScanUtils::column_type_name(column.type_))));
+            OZ(nullables.push_back(column.nullable_));
+          }
+        }
+      }
+    }
+  }
+  if (OB_SUCC(ret) && names.empty()) {
+    ObExplainStmt *explain_stmt = NULL;
+    if (OB_ISNULL(bound)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (OB_ISNULL(explain_stmt = create_stmt<ObExplainStmt>())) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      ObExplainDisplayOpt opt;
+      opt.with_tree_line_ = true;
+      explain_stmt->set_explain_query_stmt(static_cast<ObDMLStmt *>(bound));
+      explain_stmt->set_display_opt(opt);
+    }
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < names.count(); ++i) {
+    if (0 != i) { OZ(sql.append(" UNION ALL ")); }
+    OZ(sql.append("SELECT "));
+    OZ(append_table_function_text(sql, names.at(i)));
+    OZ(sql.append(" AS `column_name`,"));
+    OZ(append_table_function_text(sql, types.at(i)));
+    OZ(sql.append(" AS `column_type`,"));
+    OZ(sql.append(nullables.at(i) ? "'YES' AS `null`," : "'NO' AS `null`,"));
+    OZ(sql.append("NULL AS `key`,NULL AS `default`,NULL AS `extra`"));
+  }
+  if (OB_SUCC(ret) && !names.empty()) {
+    ret = parse_and_resolve_select_sql(sql.string());
+  }
+  return ret;
+}
+
 int ObShowResolver::resolve(const ParseNode &parse_tree)
 {
+  if (parse_tree.type_ == T_DESCRIBE_SELECT) {
+    return resolve_describe_select(parse_tree);
+  }
   if (parse_tree.type_ == T_SHOW_TABLE_FUNCTIONS || parse_tree.type_ == T_DESCRIBE_TABLE_FUNCTION) {
     return resolve_table_function_description(parse_tree);
   }

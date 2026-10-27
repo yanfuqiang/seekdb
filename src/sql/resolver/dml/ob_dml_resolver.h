@@ -210,6 +210,7 @@ public:
   int bind_unnest_table_function(const TableFunctionCall &call, TableItem *&item);
   int bind_generator_table_function(const TableFunctionCall &call, TableItem *&item);
   int bind_hybrid_table_function(const TableFunctionCall &call, TableItem *&item);
+  int bind_file_table_function(const TableFunctionCall &call, TableItem *&item);
   int apply_table_function_aliases(const TableFunctionCall &call, TableItem &item);
   int create_function_scan_item(const TableFunctionCall &call, TableItem *&item);
   int add_unnest_columns(TableItem &item, ObRawExpr &argument, int64_t argument_index,

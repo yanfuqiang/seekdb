@@ -3008,6 +3008,15 @@ int ObSelectResolver::resolve_into_outfile_with_format(const ParseNode *node, Ob
         }
         has_format_type |= (T_EXTERNAL_FILE_FORMAT_TYPE == option_node->type_);
         has_cs_type |= (T_CHARSET == option_node->type_);
+      } else if (T_COPY_HEADER == option_node->type_) {
+        into_item.has_header_ = true;
+      } else if (T_COPY_NULLSTR == option_node->type_) {
+        if (option_node->num_child_ != 1 || OB_ISNULL(option_node->children_[0])) {
+          ret = OB_ERR_UNEXPECTED;
+        } else if (OB_FAIL(resolve_into_const_node(option_node->children_[0], into_item.null_str_))) {
+        } else {
+          into_item.has_null_str_ = true;
+        }
       }
     }
     if (OB_FAIL(ret)) {
@@ -3028,7 +3037,9 @@ int ObSelectResolver::resolve_into_outfile_with_format(const ParseNode *node, Ob
       if (OB_ISNULL(option_node = format_node->children_[i])) {
         ret = OB_ERR_UNEXPECTED;
       } else if (T_EXTERNAL_FILE_FORMAT_TYPE == option_node->type_
-                 || T_CHARSET == option_node->type_) {
+                 || T_CHARSET == option_node->type_
+                 || T_COPY_HEADER == option_node->type_
+                 || T_COPY_NULLSTR == option_node->type_) {
       } else if (OB_FAIL(ObResolverUtils::resolve_file_format(option_node, external_format, params_))) {
       }
     }

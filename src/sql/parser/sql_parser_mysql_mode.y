@@ -384,6 +384,7 @@ END_P SET_VAR DELIMITER
 %type <node> date_unit date_params timestamp_params
 %type <node> drop_table_stmt table_list drop_view_stmt table_or_tables
 %type <node> explain_stmt explainable_stmt format_name kill_stmt create_outline_stmt alter_outline_stmt drop_outline_stmt opt_outline_target
+%type <node> copy_stmt copy_options_opt copy_option_list copy_option
 %type <node> expr_list expr expr_const conf_const simple_expr expr_or_default bit_expr bool_pri predicate explain_or_desc pl_expr_stmt
 %type <node> column_ref multi_delete_table
 %type <node> case_expr func_expr in_expr sub_query_flag search_expr
@@ -582,6 +583,7 @@ stmt:
   | drop_table_stmt         { $$ = $1; check_question_mark($$, result); }
   | drop_view_stmt          { $$ = $1; check_question_mark($$, result); }
   | explain_stmt            { $$ = $1; question_mark_issue($$, result); }
+  | copy_stmt               { $$ = $1; question_mark_issue($$, result); }
   | create_outline_stmt     { $$ = $1; question_mark_issue($$, result); }
   | alter_outline_stmt      { $$ = $1; question_mark_issue($$, result); }
   | drop_outline_stmt       { $$ = $1; check_question_mark($$, result); }
@@ -12239,7 +12241,15 @@ explain_or_desc relation_factor opt_desc_column_option
   malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_COLUMNS, 4, $$, $2, NULL, $3);
 }
 
-| explain_or_desc explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, 0, $2, NULL, NULL);}
+| explain_or_desc explainable_stmt
+{
+  if (NULL != $1 && T_INT == $1->type_ && 1 == $1->value_
+      && NULL != $2 && T_SELECT == $2->type_) {
+    malloc_non_terminal_node($$, result->malloc_pool_, T_DESCRIBE_SELECT, 1, $2);
+  } else {
+    GEN_EXPLAN_STMT($1, $$, 0, 0, $2, NULL, NULL);
+  }
+}
 | explain_or_desc PRETTY explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, T_PRETTY, $3, NULL, NULL);}
 | explain_or_desc PRETTY_COLOR explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, T_PRETTY_COLOR, $3, NULL, NULL);}
 
@@ -12279,9 +12289,135 @@ explain_or_desc relation_factor opt_desc_column_option
 ;
 
 explain_or_desc:
-EXPLAIN {$$ = NULL;}
-| DESCRIBE {$$ = NULL;}
-| DESC  {$$ = NULL;}
+EXPLAIN
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = 0;
+}
+| DESCRIBE
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = 1;
+}
+| DESC
+{
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = 1;
+}
+;
+
+/*****************************************************************************
+ *
+ *	copy grammar
+ *
+ *****************************************************************************/
+copy_stmt:
+COPY '(' select_stmt ')' TO STRING_VALUE copy_options_opt
+{
+  ParseNode *into_node = NULL;
+  ParseNode *format_list = NULL;
+  ParseNode *csv_name = NULL;
+  ParseNode *type_node = NULL;
+  ParseNode *type_chain = NULL;
+  ParseNode *delimiter_value = NULL;
+  ParseNode *delimiter_node = NULL;
+  ParseNode *option_chain = NULL;
+  if (OB_UNLIKELY(NULL == $3 || T_SELECT != $3->type_)) {
+    yyerror(&@1, result, "COPY source must be a SELECT statement\n");
+    YYABORT_PARSE_SQL_ERROR;
+  } else if (OB_UNLIKELY(NULL != $3->children_[PARSE_SELECT_INTO]
+                         || NULL != $3->children_[PARSE_SELECT_INTO_EXTRA])) {
+    yyerror(&@4, result, "COPY source can not contain an INTO clause\n");
+    YYABORT_PARSE_SQL_ERROR;
+  } else {
+    // COPY defaults to CSV output with a comma field delimiter, matching the
+    // CSV reader's expectations. An explicit FORMAT option overrides the type.
+    malloc_terminal_node(csv_name, result->malloc_pool_, T_VARCHAR);
+    csv_name->str_value_ = parse_strdup("csv", result->malloc_pool_, &csv_name->str_len_);
+    if (OB_UNLIKELY(NULL == csv_name->str_value_)) {
+      yyerror(NULL, result, "No more space for mallocing string\n");
+      YYABORT_NO_MEMORY;
+    }
+    malloc_non_terminal_node(type_node, result->malloc_pool_,
+                             T_EXTERNAL_FILE_FORMAT_TYPE, 1, csv_name);
+    malloc_terminal_node(delimiter_value, result->malloc_pool_, T_VARCHAR);
+    delimiter_value->str_value_ = parse_strdup(",", result->malloc_pool_,
+                                               &delimiter_value->str_len_);
+    if (OB_UNLIKELY(NULL == delimiter_value->str_value_)) {
+      yyerror(NULL, result, "No more space for mallocing string\n");
+      YYABORT_NO_MEMORY;
+    }
+    malloc_non_terminal_node(delimiter_node, result->malloc_pool_,
+                             T_FIELD_TERMINATED_STR, 1, delimiter_value);
+    delimiter_node->str_value_ = delimiter_value->str_value_;
+    delimiter_node->str_len_ = delimiter_value->str_len_;
+    if (NULL == $7) {
+      malloc_non_terminal_node(option_chain, result->malloc_pool_, T_LINK_NODE, 2,
+                               type_node, delimiter_node);
+    } else {
+      malloc_non_terminal_node(type_chain, result->malloc_pool_, T_LINK_NODE, 2,
+                               type_node, $7);
+      malloc_non_terminal_node(option_chain, result->malloc_pool_, T_LINK_NODE, 2,
+                               type_chain, delimiter_node);
+    }
+    merge_nodes(format_list, result, T_EXTERNAL_FILE_FORMAT, option_chain);
+    malloc_non_terminal_node(into_node, result->malloc_pool_, T_INTO_OUTFILE, 3,
+                             $5, format_list, NULL);
+    $3->children_[PARSE_SELECT_INTO_EXTRA] = into_node;
+    $$ = $3;
+  }
+}
+;
+
+copy_options_opt:
+/*empty*/
+{
+  $$ = NULL;
+}
+| '(' copy_option_list ')'
+{
+  $$ = $2;
+}
+;
+
+copy_option_list:
+copy_option
+{
+  $$ = $1;
+}
+| copy_option_list opt_comma copy_option
+{
+  (void)($2);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
+}
+;
+
+copy_option:
+FORMAT NAME_OB
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_EXTERNAL_FILE_FORMAT_TYPE, 1, $2);
+}
+| FORMAT STRING_VALUE
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_EXTERNAL_FILE_FORMAT_TYPE, 1, $2);
+}
+| NAME_OB
+{
+  if (0 != strcasecmp($1->str_value_, "header")) {
+    yyerror(&@1, result, "unsupported COPY option\n");
+    YYABORT_PARSE_SQL_ERROR;
+  }
+  malloc_terminal_node($$, result->malloc_pool_, T_COPY_HEADER);
+  $$->value_ = 1;
+}
+| NAME_OB STRING_VALUE
+{
+  if (0 != strcasecmp($1->str_value_, "nullstr")) {
+    yyerror(&@1, result, "unsupported COPY option\n");
+    YYABORT_PARSE_SQL_ERROR;
+  }
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_NULLSTR, 1, $2);
+}
 ;
 
 explainable_stmt:

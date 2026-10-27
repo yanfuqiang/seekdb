@@ -152,6 +152,7 @@ struct TableItem
     function_table_expr_ = nullptr;
     table_function_id_ = 0;
     table_function_requires_all_columns_ = false;
+    table_function_options_ = common::ObString();
     ddl_schema_version_ = 0;
     ddl_table_id_ = common::OB_INVALID_ID;
     json_table_def_ = nullptr;
@@ -224,6 +225,7 @@ struct TableItem
   bool is_has_sample_info() const { return sample_info_ != nullptr; }
   bool is_joined_table() const { return JOINED_TABLE == type_; }
   bool is_function_table() const { return FUNCTION_TABLE == type_; }
+  bool is_file_table() const { return FUNCTION_TABLE == type_ && !table_function_options_.empty(); }
   bool is_json_table() const { return JSON_TABLE == type_; }  // json_table_def_->table_type_ == MulModeTableType::OB_ORA_JSON_TABLE_TYPE
   bool is_values_table() const { return VALUES_TABLE == type_; }//used to mark values statement: values row(1,2), row(3,4);
 
@@ -297,6 +299,7 @@ struct TableItem
   ObRawExpr *function_table_expr_;
   uint64_t table_function_id_;
   bool table_function_requires_all_columns_;
+  common::ObString table_function_options_;
   common::ObSEArray<int64_t, 4> function_argument_column_counts_;
   common::ObSEArray<common::ObString, 8> function_column_names_;
   int64_t ddl_schema_version_;

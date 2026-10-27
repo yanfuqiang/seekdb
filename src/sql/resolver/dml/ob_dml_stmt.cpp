@@ -187,6 +187,7 @@ int TableItem::deep_copy(ObIRawExprCopier &expr_copier,
   ref_query_ = other.ref_query_;
   table_function_id_ = other.table_function_id_;
   table_function_requires_all_columns_ = other.table_function_requires_all_columns_;
+  OZ (ob_write_string(*allocator, other.table_function_options_, table_function_options_));
   OZ (function_argument_column_counts_.assign(other.function_argument_column_counts_));
   OZ (function_column_names_.assign(other.function_column_names_));
   SampleInfo *buf = NULL;
